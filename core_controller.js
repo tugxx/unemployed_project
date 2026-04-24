@@ -193,3 +193,16 @@ window.toggleFreeze = function(isFreeze, val, type) {
     return true;
   }
 };
+
+document.addEventListener('WASM_HACKER_SHUTDOWN', () => {
+  // Nhận được lệnh Tắt -> Dọn dẹp máy bơm (Freeze)
+  if (window.freezeInterval) {
+    clearInterval(window.freezeInterval);
+    window.freezeInterval = null;
+    console.log('🔥 [CORE] Đã rút phích cắm hệ thống Đóng băng!');
+  }
+
+  // (Tùy chọn) Xóa sạch các biến kết quả để giải phóng RAM
+  window.scanResults = [];
+  window.wasmMemoryObject = null;
+});
