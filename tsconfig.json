@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", // Trình duyệt Chrome hiện tại hỗ trợ JS rất mới
+    "module": "ES2022",
+    "rootDir": "./src", // Thư mục chứa code TS (Code gốc)
+    "outDir": "./dist", // Thư mục xuất ra code JS (Để Chrome đọc)
+    "strict": true, // Bật chế độ khắt khe nhất của Cảnh sát TS
+    "noImplicitAny": true, // Ép buộc mọi biến đều phải khai báo kiểu
+    "lib": ["DOM", "ES2022"], // Nhập từ điển DOM để TS hiểu window, document
+    "types": ["chrome"],
+    "removeComments": false,
+    "sourceMap": true // Sinh file map để dễ debug trên F12 Chrome
+  },
+  "include": ["src/**/*"]
+}
