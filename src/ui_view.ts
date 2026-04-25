@@ -277,6 +277,7 @@ function setupButtonHandlers() {
   btnRedraw?.addEventListener("click", () => {
     // Chỉ cần xóa sạch biến nhớ toàn cục này, Mắt Thần sẽ tự hiểu là phải bắt người dùng khoanh lại ở lần Scan tiếp theo
     globalThis.visionBox = null;
+    document.getElementById("ce-persistent-box")?.remove();
     globalThis.logStatus(
       "🗑️ Đã xóa vùng cắt cũ. Hãy bấm Scan để khoanh vùng mới!",
       "info",
@@ -453,6 +454,7 @@ function bindUIEvents() {
 // 2. HÀM GỌI GIAO DIỆN (Trả về Promise để luồng quét đứng chờ)
 globalThis.showTrainingUI = function (
   digits: BinaryTemplate[],
+  guesses: string[],
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let modal = document.getElementById(
@@ -536,8 +538,11 @@ globalThis.showTrainingUI = function (
       input.type = "text";
       input.maxLength = 1; // Chỉ cho nhập 1 ký tự
       input.dataset.index = index.toString(); // Gắn ID để lúc lưu biết là của hình nào
-      input.style.cssText =
-        "width: 30px; text-align: center; font-size: 18px; font-weight: bold; background: #333; color: #fff; border: 1px solid #007acc; border-radius: 4px; padding: 4px;";
+
+      input.value = guesses[index] || "";
+      input.style.color = guesses[index] ? "#00ff88" : "#ffffff";
+      input.style.cssText +=
+        "width: 30px; text-align: center; font-size: 18px; font-weight: bold; background: #333; border: 1px solid #007acc; border-radius: 4px; padding: 4px;";
 
       card.appendChild(canvas);
       card.appendChild(input);

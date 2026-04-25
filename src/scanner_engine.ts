@@ -187,17 +187,26 @@ async function processAutoExactScan(
 ) {
   globalThis.logStatus("🤖 Mắt Thần đang đọc số trên màn hình...", "info");
 
-  // KHÔNG CẦN QUAN TÂM NGƯỜI DÙNG NHẬP GÌ, ÉP BUỘC ĐỌC TỪ BOX
-  const autoVal = await globalThis.autoReadScreenValue();
+  try {
+    // KHÔNG CẦN QUAN TÂM NGƯỜI DÙNG NHẬP GÌ, ÉP BUỘC ĐỌC TỪ BOX
+    const autoVal = await globalThis.autoReadScreenValue();
 
-  if (autoVal === null) {
-    throw new Error("Không nhận diện được số từ vùng đã khoanh! Hủy quét.");
+    if (autoVal === null) {
+      return;
+    }
+
+    globalThis.logStatus(`👁️ Mắt Thần chốt sổ: ${autoVal}`, "success");
+
+    validateExactValue(autoVal);
+    await performExactScan(scanType, autoVal, view, typeTag, len);
+  } catch (e) {
+    if (e instanceof Error) {
+      globalThis.logStatus(`❌ Lỗi hệ thống Vision: ${e.message}`, "error");
+    } else {
+      // Trường hợp e là string hoặc kiểu dữ liệu lạ khác
+      globalThis.logStatus(`❌ Lỗi không xác định: ${String(e)}`, "error");
+    }
   }
-
-  globalThis.logStatus(`👁️ Mắt Thần chốt sổ: ${autoVal}`, "success");
-
-  validateExactValue(autoVal);
-  await performExactScan(scanType, autoVal, view, typeTag, len);
 }
 
 globalThis.executeScan = async function executeScan(

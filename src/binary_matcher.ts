@@ -3,6 +3,8 @@
 // Chuyên trị đọc UI Game bằng thuật toán so khớp điểm ảnh nhị phân
 // ============================================================================
 
+const IS_DEBUG_VISION = false;
+
 // Cấu trúc lưu trữ hình mẫu (Template)
 interface BinaryTemplate {
   label: string;
@@ -90,7 +92,6 @@ globalThis.BinaryMatcher = {
     // Quét từng cột dọc từ trái sang phải
     for (let x = 0; x < width; x++) {
       const hasPixel = columnHasPixel(binaryData, width, height, x);
-
       if (hasPixel && !isChar) {
         // Bắt đầu chạm vào viền trái của chữ
         isChar = true;
@@ -98,36 +99,59 @@ globalThis.BinaryMatcher = {
       } else if (!hasPixel && isChar) {
         // Chạm vào khoảng trắng -> Kết thúc chữ
         isChar = false;
-        const charWidth = x - startX;
-
-        if (charWidth > 2) {
-          const pixels = extractCharPixels(
-            binaryData,
-            width,
-            height,
-            startX,
-            charWidth,
-          );
-          digits.push({ label: "?", width: charWidth, height, pixels });
-        }
+        this.addValidatedDigit(digits, binaryData, width, height, startX, x);
       }
     }
 
     if (isChar) {
-      const charWidth = width - startX;
-      if (charWidth > 2) {
-        const pixels = extractCharPixels(
-          binaryData,
-          width,
-          height,
-          startX,
-          charWidth,
-        );
-        digits.push({ label: "?", width: charWidth, height, pixels });
-      }
+      this.addValidatedDigit(digits, binaryData, width, height, startX, width);
     }
 
+    globalThis.logStatus(
+      `🔍 Tìm thấy ${digits.length} ký tự tiềm năng.`,
+      "info",
+    );
     return digits;
+  },
+
+  addValidatedDigit: function (
+    digits: BinaryTemplate[],
+    binaryData: Uint8Array,
+    width: number,
+    height: number,
+    startX: number,
+    endX: number,
+  ) {
+    const charWidth = endX - startX;
+    if (charWidth <= 2) return; // Bỏ qua nếu quá hẹp
+
+    // 1. Lọc rác dọc (vạch kẻ)
+    if (charWidth < 4) {
+      console.log(`🗑️ Đã lọc bỏ rác dọc tại X:${startX} (width: ${charWidth})`);
+      return;
+    }
+
+    // 2. Cảnh báo nếu khối quá lớn (Dùng actualHeight để fix lỗi ESLint)
+    const actualHeight = height;
+    if (charWidth > actualHeight * 1.2) {
+      console.warn(
+        `⚠️ Khối tại X:${startX} quá lớn (rộng ${charWidth}px). Có thể dính chùm!`,
+      );
+    }
+
+    // 3. Trích xuất pixel
+    const pixels = extractCharPixels(
+      binaryData,
+      width,
+      height,
+      startX,
+      charWidth,
+    );
+    digits.push({ label: "?", width: charWidth, height: actualHeight, pixels });
+
+    console.log(
+      `[Segment] Đã cắt khối: Rộng ${charWidth}px, Tọa độ X: ${startX}`,
+    );
   },
 
   /**
@@ -169,6 +193,10 @@ globalThis.BinaryMatcher = {
       }
     });
 
+    console.log(
+      `[Match Result] Kết quả tốt nhất: [${bestMatch}] với độ khớp: ${highestScore.toFixed(1)}%`,
+    );
+
     // Nếu độ giống nhau thấp hơn 85%, coi như không nhận diện được
     return highestScore > 85 ? bestMatch : "?";
   },
@@ -183,22 +211,58 @@ globalThis.BinaryMatcher = {
   },
 };
 
-globalThis.autoReadScreenValue = async function (): Promise<number | null> {
-  // 1. Nếu chưa khoanh vùng, yêu cầu người dùng khoanh ngay lập tức
-  if (!globalThis.visionBox) {
-    globalThis.logStatus(
-      "🖱️ Vui lòng khoanh vùng chứa con số trên Game...",
-      "info",
-    );
-    const box = await globalThis.startScreenSelection();
-    if (!box) {
-      globalThis.logStatus("⚠️ Đã hủy khoanh vùng màn hình.", "warning");
-      return null;
-    }
-    globalThis.visionBox = box; // Lưu lại xài cho Next Scan
+function updateBinaryDebugView(
+  binaryData: Uint8Array,
+  width: number,
+  height: number,
+  label: string = "AI Vision",
+) {
+  const debugCanvas = document.createElement("canvas");
+  debugCanvas.width = width;
+  debugCanvas.height = height;
+  const dctx = debugCanvas.getContext("2d");
+  if (!dctx) return;
+
+  const dImgData = dctx.createImageData(width, height);
+
+  for (let i = 0; i < binaryData.length; i++) {
+    // 1 -> Vàng chanh rực rỡ, 0 -> Đen xì
+    const color = binaryData[i] === 1 ? 255 : 0;
+    const p = i * 4;
+    dImgData.data[p] = color; // R
+    dImgData.data[p + 1] = color; // G
+    dImgData.data[p + 2] = 0; // B
+    dImgData.data[p + 3] = 255; // Alpha
+  }
+  dctx.putImageData(dImgData, 0, 0);
+
+  // Quản lý Element hiển thị
+  let debugUI = document.getElementById("ce-debug-vision") as HTMLImageElement;
+  if (!debugUI) {
+    debugUI = document.createElement("img");
+    debugUI.id = "ce-debug-vision";
+    // pointer-events: none để không cản trở thao tác game
+    debugUI.style.cssText = `
+      position: fixed; bottom: 10px; right: 10px; z-index: 9999999; 
+      border: 2px solid #ff0055; background: #000; width: 250px; 
+      image-rendering: pixelated; pointer-events: none;
+      box-shadow: 0 0 15px rgba(255, 0, 85, 0.5);
+    `;
+    document.body.appendChild(debugUI);
   }
 
-  // 2
+  debugUI.src = debugCanvas.toDataURL();
+  console.log(`👁️ [${label}] Đã cập nhật ảnh X-Ray (${width}x${height})`);
+}
+
+async function captureAndCrop(box: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): Promise<ImageData | null> {
+  if (!box) return null;
+
   globalThis.logStatus(
     "📸 Đang chụp ảnh màn hình để xuyên thủng WebGL...",
     "info",
@@ -250,66 +314,184 @@ globalThis.autoReadScreenValue = async function (): Promise<number | null> {
   const imageBitmap = await createImageBitmap(blob);
 
   // 3. Tạo một Canvas ẩn để "copy" vùng ảnh đã khoanh
-  const offscreen = new OffscreenCanvas(
-    globalThis.visionBox.width,
-    globalThis.visionBox.height,
-  );
+  const offscreen = new OffscreenCanvas(box.width, box.height);
   const ctx = offscreen.getContext("2d");
   if (!ctx) return null;
 
   // Lấy đúng góc tọa độ visionBox bứng sang
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = globalThis.devicePixelRatio || 1;
+  const margin = 2;
   ctx.drawImage(
     imageBitmap,
-    globalThis.visionBox.x * dpr,
-    globalThis.visionBox.y * dpr,
-    globalThis.visionBox.width * dpr,
-    globalThis.visionBox.height * dpr,
+    (box.x + margin) * dpr,
+    (box.y + margin) * dpr,
+    (box.width - margin * 2) * dpr,
+    (box.height - margin * 2) * dpr,
     0,
     0,
-    offscreen.width,
-    offscreen.height,
+    box.width - margin * 2,
+    box.height - margin * 2,
   );
 
-  // 4. Lấy dữ liệu điểm ảnh và đưa cho Mắt Thần nhai
-  const imageData = ctx.getImageData(0, 0, offscreen.width, offscreen.height);
-  imageBitmap.close(); // Xóa bỏ bức ảnh gốc khổng lồ khỏi VRAM của Card màn hình
-  const binaryData = globalThis.BinaryMatcher.binarize(imageData, 128); // 128 là ngưỡng sáng mặc định
-  const digits = globalThis.BinaryMatcher.segmentDigits(
-    binaryData,
-    offscreen.width,
-    offscreen.height,
+  imageBitmap.close();
+
+  // offscreen.convertToBlob().then((blob) => {
+  //   const reader = new FileReader();
+  //   reader.onloadend = () => {
+  //     const base64data = reader.result as string;
+
+  //     // Tạo một cái ảnh nổi trên màn hình để soi
+  //     let debugUI = document.getElementById(
+  //       "ce-debug-vision",
+  //     ) as HTMLImageElement;
+  //     if (!debugUI) {
+  //       debugUI = document.createElement("img");
+  //       debugUI.id = "ce-debug-vision";
+  //       debugUI.style.cssText =
+  //         "position:fixed; bottom:10px; right:10px; z-index:9999999; border:2px solid red; background:#000; width:200px; image-rendering:pixelated;";
+  //       document.body.appendChild(debugUI);
+  //     }
+  //     debugUI.src = base64data;
+  //     console.log("👁️ Mắt Thần đang nhìn thấy ảnh hiện ở góc màn hình!");
+  //   };
+  //   reader.readAsDataURL(blob);
+  // });
+
+  return ctx.getImageData(0, 0, box.width, box.height);
+}
+
+async function ensureTrained(digits: BinaryTemplate[]): Promise<boolean> {
+  const guesses = digits.map((digit) => globalThis.BinaryMatcher.match(digit));
+  const hasUnknown = guesses.includes("?");
+
+  if (!hasUnknown) return true;
+
+  globalThis.logStatus(
+    "⚠️ Mắt Thần gặp ký tự lạ. Vui lòng dạy nó...",
+    "warning",
   );
+  return await globalThis.showTrainingUI(digits, guesses);
+}
 
-  if (globalThis.visionTemplates.size === 0) {
-    globalThis.logStatus(
-      "⚠️ Phát hiện font chữ lạ. Mở giao diện huấn luyện...",
-      "warning",
-    );
+function renderPersistentBox(box: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) {
+  let persistentBox = document.getElementById(
+    "ce-persistent-box",
+  ) as HTMLDivElement | null;
 
-    // Luồng code sẽ BỊ ĐÓNG BĂNG tại đây, chờ người dùng bấm "Lưu" hoặc "Hủy"
-    const isTrained = await globalThis.showTrainingUI(digits);
+  if (!persistentBox) {
+    persistentBox = document.createElement("div");
+    persistentBox.id = "ce-persistent-box";
 
-    if (!isTrained) {
-      globalThis.logStatus("❌ Đã hủy huấn luyện Mắt Thần.", "error");
-      return null;
-    }
+    // pointer-events: none là cực kỳ quan trọng để không cản trở click chuột vào game
+    persistentBox.style.cssText = `
+      position: fixed;
+      border: 2px dashed #00ff88;
+      background: rgba(0, 255, 136, 0.05);
+      z-index: 9999998;
+      pointer-events: none;
+      box-sizing: border-box;
+      box-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+      transition: all 0.15s ease-out;
+    `;
 
-    globalThis.logStatus(
-      "✅ Đã học thuộc lòng font chữ thành công!",
-      "success",
-    );
+    document.body.appendChild(persistentBox);
   }
 
-  // 5. Giải mã và ghép số
+  // Cập nhật vị trí và kích thước theo box mới nhất
+  persistentBox.style.left = box.x + "px";
+  persistentBox.style.top = box.y + "px";
+  persistentBox.style.width = box.width + "px";
+  persistentBox.style.height = box.height + "px";
+}
+
+globalThis.autoReadScreenValue = async function (): Promise<number | null> {
+  // 1. Nếu chưa khoanh vùng, yêu cầu người dùng khoanh ngay lập tức
+  if (!globalThis.visionBox) {
+    globalThis.logStatus(
+      "🖱️ Vui lòng khoanh vùng chứa con số trên Game...",
+      "info",
+    );
+    const box = await globalThis.startScreenSelection();
+    if (!box) {
+      globalThis.logStatus("⚠️ Đã hủy khoanh vùng màn hình.", "warning");
+      return null;
+    }
+    globalThis.visionBox = box; // Lưu lại xài cho Next Scan
+
+    renderPersistentBox(box);
+  }
+
+  const currentBox = globalThis.visionBox;
+  if (!currentBox) return null;
+
+  // 2. Chụp và xử lý ảnh nhị phân
+  const imageData = await captureAndCrop(currentBox);
+  if (!imageData) return null;
+
+  // 4. Lấy dữ liệu điểm ảnh và đưa cho Mắt Thần nhai
+  const binaryData = globalThis.BinaryMatcher.binarize(imageData, 128); // 128 là ngưỡng sáng mặc định
+  if (IS_DEBUG_VISION) {
+    updateBinaryDebugView(
+      binaryData,
+      currentBox.width,
+      currentBox.height,
+      "Check Threshold",
+    );
+  }
+  const digits = globalThis.BinaryMatcher.segmentDigits(
+    binaryData,
+    imageData.width,
+    imageData.height,
+  );
+
+  if (digits.length === 0) {
+    globalThis.logStatus(
+      "⚠️ Vùng khoanh trống trơn (không tìm thấy hình khối nào). Đang reset vùng chọn...",
+      "error",
+    );
+
+    // Xóa luôn cái box lỗi để lần sau bấm Scan nó bắt khoanh lại
+    globalThis.visionBox = null;
+    document.getElementById("ce-persistent-box")?.remove();
+    return null;
+  }
+
+  const trained = await ensureTrained(digits);
+  if (!trained) return null;
+
   let rawString = "";
+  let unmatchCount = 0;
+
   for (const char of digits) {
-    rawString += globalThis.BinaryMatcher.match(char);
+    const res = globalThis.BinaryMatcher.match(char);
+    if (res === "?") unmatchCount++;
+    rawString += res;
+  }
+
+  if (rawString.includes("?")) {
+    globalThis.logStatus(
+      `❌ Thất bại: Nhận diện được ${digits.length} khối nhưng có ${unmatchCount} khối không khớp mẫu (score < 85%).`,
+      "warning",
+    );
+    // In chuỗi kết quả lỗi ra console để soi: ví dụ "1?0"
+    console.log("Dữ liệu nhận diện lỗi:", rawString);
+    return null;
   }
 
   // Lọc bỏ sạch sẽ rác (icon, chữ cái, dấu ?), chỉ giữ số
   const cleanNumberStr = rawString.replaceAll(/\D/g, "");
+  if (!cleanNumberStr) {
+    globalThis.logStatus(
+      "❌ Thất bại: Kết quả nhận diện không chứa chữ số nào.",
+      "error",
+    );
+    return null;
+  }
 
-  if (!cleanNumberStr) return null;
   return Number.parseInt(cleanNumberStr, 10);
 };

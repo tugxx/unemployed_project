@@ -12,7 +12,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "*://*.poki.com/*",
+        "*://*.crazygames.com/*",
+        "*://*.y8.com/*",
+        "*://localhost/*",
+        "*://127.0.0.1/*"
+      ],
       "all_frames": true,
       "run_at": "document_start",
       "js": ["dist/content.js"]
@@ -28,7 +34,13 @@
         "dist/memory_writer.js",
         "dist/ui_view.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "*://*.poki.com/*",
+        "*://*.crazygames.com/*",
+        "*://*.y8.com/*",
+        "*://localhost/*",
+        "*://127.0.0.1/*"
+      ]
     }
   ]
 }

@@ -30,3 +30,7 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+
+#############################3
+docx/

@@ -33,6 +33,14 @@ declare global {
       width: number,
       height: number,
     ) => BinaryTemplate[];
+    addValidatedDigit: (
+      digits: BinaryTemplate[],
+      binaryData: Uint8Array,
+      width: number,
+      height: number,
+      startX: number,
+      endX: number,
+    ) => void;
     match: (target: BinaryTemplate) => string;
     train: (label: string, template: BinaryTemplate) => void;
   };
@@ -43,5 +51,8 @@ declare global {
     height: number;
   } | null>;
   var autoReadScreenValue: () => Promise<number | null>;
-  var showTrainingUI: (digits: BinaryTemplate[]) => Promise<boolean>;
+  var showTrainingUI: (
+    digits: BinaryTemplate[],
+    guesses: string[],
+  ) => Promise<boolean>;
 }
