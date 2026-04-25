@@ -3,7 +3,7 @@
   "name": "WASM Hacker Pro",
   "version": "1.0",
   "description": "Auto Injector & RAM Scanner cho Web Game",
-  "permissions": ["storage", "action"],
+  "permissions": ["storage", "action", "activeTab"],
   "action": {
     "default_title": "Bật/Tắt bảng điều khiển"
   },
@@ -23,6 +23,8 @@
       "resources": [
         "dist/memory_hooker.js",
         "dist/scanner_engine.js",
+        "dist/screen_selector.js",
+        "dist/binary_matcher.js",
         "dist/memory_writer.js",
         "dist/ui_view.js"
       ],

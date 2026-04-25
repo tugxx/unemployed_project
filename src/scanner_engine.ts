@@ -71,8 +71,27 @@ async function performExactScan(
   );
 }
 
-function checkDiffMatch(scanType: string, isChanged: boolean): boolean {
-  return scanType === "changed" ? isChanged : !isChanged;
+function checkDiffMatch(
+  scanType: string,
+  current: number,
+  old: number,
+): boolean {
+  switch (scanType) {
+    // DÀNH CHO BIẾN MÃ HÓA (XOR, Obfuscated) - Như bạn đã nói
+    case "changed":
+      return current !== old;
+    case "unchanged":
+      return current === old;
+
+    // DÀNH CHO BIẾN THƯỜNG (Game Idle F64) - Lọc cực nhanh
+    case "increased":
+      return current > old;
+    case "decreased":
+      return current < old;
+
+    default:
+      return false;
+  }
 }
 
 async function filterFromScratch(
@@ -87,8 +106,7 @@ async function filterFromScratch(
   for (let i = 0; i < len; i += CHUNK_SIZE) {
     const end = Math.min(i + CHUNK_SIZE, len);
     for (let j = i; j < end; j++) {
-      const isChanged = view[j] !== snapshot[j];
-      if (checkDiffMatch(scanType, isChanged)) {
+      if (checkDiffMatch(scanType, view[j], snapshot[j])) {
         globalThis.scanResults.push(j);
       }
     }
@@ -110,8 +128,7 @@ function filterFromOldResults(
     const addr = oldResults[i];
     if (addr >= len) continue;
 
-    const isChanged = view[addr] !== snapshot[addr];
-    if (checkDiffMatch(scanType, isChanged)) {
+    if (checkDiffMatch(scanType, view[addr], snapshot[addr])) {
       oldResults[newCount++] = addr;
     }
   }
@@ -160,21 +177,41 @@ function validateExactValue(val?: number | null): asserts val is number {
   }
 }
 
+type SupportedView = Int32Array | Float32Array | Float64Array;
+
+async function processAutoExactScan(
+  scanType: string,
+  view: SupportedView,
+  typeTag: string,
+  len: number,
+) {
+  globalThis.logStatus("🤖 Mắt Thần đang đọc số trên màn hình...", "info");
+
+  // KHÔNG CẦN QUAN TÂM NGƯỜI DÙNG NHẬP GÌ, ÉP BUỘC ĐỌC TỪ BOX
+  const autoVal = await globalThis.autoReadScreenValue();
+
+  if (autoVal === null) {
+    throw new Error("Không nhận diện được số từ vùng đã khoanh! Hủy quét.");
+  }
+
+  globalThis.logStatus(`👁️ Mắt Thần chốt sổ: ${autoVal}`, "success");
+
+  validateExactValue(autoVal);
+  await performExactScan(scanType, autoVal, view, typeTag, len);
+}
+
 globalThis.executeScan = async function executeScan(
   scanType: string,
-  val?: number | null,
   type?: string,
 ) {
   try {
     const resolvedType = resolveAndLockDataType(scanType, type);
-
     const view = globalThis.getMemoryView(resolvedType);
     const len = view.length;
     const typeTag = `[${resolvedType.toUpperCase()}]`;
 
     if (scanType === "first" || scanType === "next") {
-      validateExactValue(val);
-      await performExactScan(scanType, val, view, typeTag, len);
+      await processAutoExactScan(scanType, view, typeTag, len);
     } else if (scanType === "unknown_initial") {
       globalThis.scanResults = [];
       globalThis.memorySnapshot = view.slice();
@@ -182,7 +219,12 @@ globalThis.executeScan = async function executeScan(
         `📸 ${typeTag} Chụp ảnh RAM thành công. Hãy đổi giá trị!`,
         "info",
       );
-    } else if (scanType === "changed" || scanType === "unchanged") {
+    } else if (
+      scanType === "changed" ||
+      scanType === "unchanged" ||
+      scanType === "increased" ||
+      scanType === "decreased"
+    ) {
       await performDifferenceScan(scanType, view, typeTag, len);
     }
 

@@ -21,3 +21,24 @@ chrome.action.onClicked.addListener((_tab) => {
     }
   });
 });
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "captureTab") {
+    // chrome.tabs.captureVisibleTab(
+    //   { format: "jpeg", quality: 80 },
+    //   (dataUrl) => {
+    //     sendResponse({ imgDataUrl: dataUrl });
+    //   },
+    // );
+    // Tuyệt chiêu chụp ảnh toàn bộ Tab hiện tại
+    chrome.tabs.captureVisibleTab({ format: "png" }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        console.error("Lỗi Background:", chrome.runtime.lastError.message);
+        sendResponse({ error: chrome.runtime.lastError.message });
+        return;
+      }
+      sendResponse({ imgDataUrl: dataUrl });
+    });
+    return true; // Bắt buộc phải có dòng này để báo hiệu sẽ trả kết quả bất đồng bộ
+  }
+});

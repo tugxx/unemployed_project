@@ -1,5 +1,5 @@
 globalThis.freezeInterval = null;
-globalThis.freezeInterval = globalThis.freezeInterval || null;
+globalThis.freezeInterval = globalThis.freezeInterval ?? null;
 
 globalThis.writeValue = function writeValue(val, type) {
   try {
@@ -30,49 +30,57 @@ globalThis.writeValue = function writeValue(val, type) {
   }
 };
 
-globalThis.toggleFreeze = function (isFreeze, val, type) {
-  if (isFreeze) {
-    if (globalThis.scanResults?.length !== 1) {
-      globalThis.logStatus(
-        `⚠️ TỪ CHỐI: Đang có ${
-          globalThis.scanResults.length
-        } kết quả. Hãy Next Scan để lọc còn ĐÚNG 1 kết quả tránh sập game!`,
-        "warning",
-      );
-      return false; // Trả về false để UI biết đường tự động bỏ tick
-    }
-
-    // Clear cái cũ trước khi tạo cái mới để tránh chồng chéo
-    if (globalThis.freezeInterval) clearInterval(globalThis.freezeInterval);
-
-    globalThis.freezeInterval = setInterval(() => {
-      // Không in log khi Freeze để tránh spam đầy bảng log
-      try {
-        const view = getMemoryView(type);
-        const targetIndex = globalThis.scanResults[0];
-        if (targetIndex < view.length) view[targetIndex] = val;
-      } catch (e) {
-        clearInterval(globalThis.freezeInterval ?? undefined);
-        globalThis.freezeInterval = null;
-        globalThis.logStatus(
-          `❌ Freeze bị lỗi, đã tự động ngắt! ${e}`,
-          "error",
-        );
-
-        const cb = document.getElementById(
-          "ce-cb-freeze",
-        ) as HTMLInputElement | null;
-        if (cb) cb.checked = false;
-      }
-    }, 200);
-    globalThis.logStatus("❄️ Đã ĐÓNG BĂNG giá trị!", "info");
-    return true;
-  } else {
-    if (globalThis.freezeInterval) clearInterval(globalThis.freezeInterval);
-    globalThis.freezeInterval = null;
-    globalThis.logStatus("🔥 Đã rã đông.", "info");
-    return true;
+globalThis.startFreeze = function (type: string): boolean {
+  if (!globalThis.scanResults || globalThis.scanResults.length === 0) {
+    globalThis.logStatus("⚠️ Không có địa chỉ nào để đóng băng!", "warning");
+    return false;
   }
+
+  if (globalThis.scanResults.length > 20) {
+    globalThis.logStatus(
+      `⚠️ Đang có ${globalThis.scanResults.length} kết quả. Hãy lọc bớt trước khi Freeze!`,
+      "warning",
+    );
+    return false;
+  }
+
+  const view = getMemoryView(type);
+  const activeFreezes = globalThis.scanResults.map((idx) => ({
+    index: idx,
+    lockedValue: view[idx], // Khóa bằng chính giá trị nó đang có
+  }));
+
+  // Clear cái cũ trước khi tạo cái mới
+  if (globalThis.freezeInterval) clearInterval(globalThis.freezeInterval);
+
+  globalThis.freezeInterval = setInterval(() => {
+    try {
+      const currentView = getMemoryView(type);
+      activeFreezes.forEach((item) => {
+        if (item.index < currentView.length) {
+          currentView[item.index] = item.lockedValue;
+        }
+      });
+    } catch (e) {
+      globalThis.stopFreeze(); // Gọi hàm stop dọn dẹp
+      globalThis.logStatus(`❌ Freeze bị lỗi, đã tự động ngắt! ${e}`, "error");
+
+      const cb = document.getElementById(
+        "ce-cb-freeze",
+      ) as HTMLInputElement | null;
+      if (cb) cb.checked = false;
+    }
+  }, 200);
+
+  globalThis.logStatus("❄️ Đã ĐÓNG BĂNG giá trị!", "info");
+  return true;
+};
+
+globalThis.stopFreeze = function (): boolean {
+  if (globalThis.freezeInterval) clearInterval(globalThis.freezeInterval);
+  globalThis.freezeInterval = null;
+  globalThis.logStatus("🔥 Đã rã đông.", "info");
+  return true;
 };
 
 document.addEventListener("WASM_HACKER_SHUTDOWN", () => {

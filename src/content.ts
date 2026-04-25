@@ -17,7 +17,7 @@ if (!isTrashFrame) {
     });
   }
 
-  chrome.storage.local.get(["isWasmEnabled"], (result) => {
+  chrome.storage.local.get(["isWasmEnabled"], async (result) => {
     if (result.isWasmEnabled === true) {
       console.log(
         `🧰 WASM Hacker [ON]: Đang bẫy RAM tại -> ${
@@ -25,10 +25,18 @@ if (!isTrashFrame) {
         }`,
       );
 
-      injectScript("dist/memory_hooker.js")
-        .then(() => injectScript("dist/scanner_engine.js"))
-        .then(() => injectScript("dist/memory_writer.js"))
-        .then(() => injectScript("dist/ui_view.js"));
+      const injectScripts = [
+        "dist/memory_hooker.js",
+        "dist/screen_selector.js",
+        "dist/binary_matcher.js",
+        "dist/scanner_engine.js",
+        "dist/memory_writer.js",
+        "dist/ui_view.js",
+      ];
+
+      for (const scriptPath of injectScripts) {
+        await injectScript(scriptPath);
+      }
     } else {
       console.log(
         `🧰 WASM Hacker [OFF]: Đang ngủ đông tại -> ${
@@ -72,3 +80,33 @@ if (!isTrashFrame) {
     }
   });
 }
+
+// Trong file Content Script (nơi chứa injectScript)
+window.addEventListener("message", (event) => {
+  // 1. Chỉ nhận tin nhắn từ chính trang web hiện tại
+  if (
+    event.origin !== globalThis.window.location.origin ||
+    event.source !== globalThis.window
+  ) {
+    return;
+  }
+
+  // 2. Nhận yêu cầu chụp ảnh từ Mắt Thần (Main World)
+  if (event.data?.action === "REQUEST_SCREENSHOT") {
+    const messageId = event.data.messageId; // Nhớ ID để trả đúng người
+
+    // 3. Gọi Background (Vì Content Script có quyền dùng chrome.runtime)
+    chrome.runtime.sendMessage({ action: "captureTab" }, (response) => {
+      // 4. Quăng bức ảnh ngược trở lại Game
+      window.postMessage(
+        {
+          action: "RESPONSE_SCREENSHOT",
+          messageId: messageId,
+          dataUrl: response.imgDataUrl,
+          error: response?.error,
+        },
+        globalThis.window.location.origin,
+      );
+    });
+  }
+});

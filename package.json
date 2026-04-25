@@ -4,9 +4,12 @@
   "description": "",
   "main": "background.js",
   "scripts": {
-    "dev": "tsc -w",
+    "dev": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc"
+    "build": "tsc",
+    "format": "prettier --write \".\"",
+    "lint": "eslint \".\"",
+    "scan:all": "npm run format && npm run lint"
   },
   "repository": {
     "type": "git",
@@ -25,6 +28,7 @@
     "@types/chrome": "^0.1.40",
     "eslint": "^10.2.1",
     "globals": "^17.5.0",
+    "prettier": "^3.8.3",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.0"
   },

@@ -11,7 +11,11 @@ globalThis.maxWasmMemorySize = globalThis.maxWasmMemorySize || 0;
     options?: boolean | AddEventListenerOptions,
   ) {
     if (
-      (type === "keydown" || type === "keyup" || type === "keypress") &&
+      (type === "keydown" ||
+        type === "keyup" ||
+        type === "keypress" ||
+        type === "wheel" ||
+        type === "mousedown") &&
       (this === globalThis || this === document)
     ) {
       const wrappedListener = (e: Event) => {
