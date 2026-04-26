@@ -1,6 +1,9 @@
+import { IOcrEngine } from "./vision/IOcrEngine";
+// import { TesseractEngine } from "./TesseractEngine";
+
 export {};
 
-interface BinaryTemplate {
+export interface BinaryTemplate {
   label: string;
   width: number;
   height: number;
@@ -16,6 +19,8 @@ declare global {
   var freezeInterval: number | null;
   var visionTemplates: Map<string, BinaryTemplate>;
   var visionBox: { x: number; y: number; width: number; height: number } | null;
+  var currentOcrEngine: IOcrEngine;
+  var IS_DEBUG_VISION: boolean;
 
   var initModMenu: () => void;
   var executeScan: (scanType: string, type?: string) => Promise<void>;
@@ -27,6 +32,7 @@ declare global {
   var logStatus: (msg: string, type: string) => void;
   var updateTargetStatus: (count: number) => void;
   var BinaryMatcher: {
+    init: () => Promise<void>;
     binarize: (imageData: ImageData, threshold?: number) => Uint8Array;
     segmentDigits: (
       binaryData: Uint8Array,
@@ -43,6 +49,8 @@ declare global {
     ) => void;
     match: (target: BinaryTemplate) => string;
     train: (label: string, template: BinaryTemplate) => void;
+    recognize: (imageData: ImageData) => Promise<number | null>;
+    ensureTrained: (digits: BinaryTemplate[]) => Promise<boolean>;
   };
   var startScreenSelection: () => Promise<{
     x: number;

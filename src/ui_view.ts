@@ -1,3 +1,5 @@
+import { BinaryTemplate } from "./global";
+
 const getHeaderUI = () => `
   <div id="ce-header" style="background:#2d2d30; padding:10px; cursor:move; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #444; flex-shrink:0;">
       <b id="ce-title-text" style="color:#00ff88; font-size:14px; user-select:none;">🧰 <span id="ce-title-name">WASM Engine V5</span></b>

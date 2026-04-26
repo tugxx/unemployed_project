@@ -25,17 +25,18 @@ if (!isTrashFrame) {
         }`,
       );
 
-      const injectScripts = [
-        "dist/memory_hooker.js",
-        "dist/screen_selector.js",
-        "dist/binary_matcher.js",
-        "dist/scanner_engine.js",
-        "dist/memory_writer.js",
-        "dist/ui_view.js",
-      ];
+      const manifest = chrome.runtime.getManifest();
+      const webResources = manifest.web_accessible_resources as
+        | Array<{ resources: string[] }>
+        | undefined;
+      const injectScripts = webResources?.[0]?.resources || [];
+      // console.log("🎯 Danh sách file cần tiêm:", injectScripts); sonar
 
+      // Vòng lặp này giờ sẽ chỉ chạy đúng 1 lần cho cái file injected_main.bundle.js
       for (const scriptPath of injectScripts) {
+        // console.log(`💉 Đang bắt đầu tiêm: ${scriptPath}`); sonar
         await injectScript(scriptPath);
+        // console.log(`✅ Tiêm xong: ${scriptPath}`); sonar
       }
     } else {
       console.log(

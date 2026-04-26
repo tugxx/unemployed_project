@@ -4,12 +4,12 @@
   "description": "",
   "main": "background.js",
   "scripts": {
-    "dev": "tsc",
+    "check": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc",
+    "build": "npx esbuild src/core.ts --bundle --outfile=dist/core.bundle.js && npx esbuild src/content.ts --bundle --outfile=dist/content.bundle.js && npx esbuild src/background.ts --bundle --outfile=dist/background.bundle.js",
     "format": "prettier --write \".\"",
     "lint": "eslint \".\"",
-    "scan:all": "npm run format && npm run lint"
+    "scan": "npm run format && npm run lint"
   },
   "repository": {
     "type": "git",
@@ -26,6 +26,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/chrome": "^0.1.40",
+    "esbuild": "^0.28.0",
     "eslint": "^10.2.1",
     "globals": "^17.5.0",
     "prettier": "^3.8.3",
@@ -83,6 +84,7 @@
     "semver": "^7.7.4",
     "shebang-command": "^2.0.0",
     "shebang-regex": "^3.0.0",
+    "tesseract.js": "^7.0.0",
     "tinyglobby": "^0.2.16",
     "ts-api-utils": "^2.5.0",
     "type-check": "^0.4.0",

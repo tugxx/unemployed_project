@@ -8,7 +8,7 @@
     "default_title": "Bật/Tắt bảng điều khiển"
   },
   "background": {
-    "service_worker": "dist/background.js"
+    "service_worker": "dist/background.bundle.js"
   },
   "content_scripts": [
     {
@@ -19,21 +19,14 @@
         "*://localhost/*",
         "*://127.0.0.1/*"
       ],
-      "all_frames": true,
+      "all_frames": false,
       "run_at": "document_start",
-      "js": ["dist/content.js"]
+      "js": ["dist/content.bundle.js"]
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": [
-        "dist/memory_hooker.js",
-        "dist/scanner_engine.js",
-        "dist/screen_selector.js",
-        "dist/binary_matcher.js",
-        "dist/memory_writer.js",
-        "dist/ui_view.js"
-      ],
+      "resources": ["dist/core.bundle.js"],
       "matches": [
         "*://*.poki.com/*",
         "*://*.crazygames.com/*",

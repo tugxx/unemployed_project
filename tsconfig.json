@@ -9,7 +9,8 @@
     "lib": ["DOM", "ES2022"], // Nhập từ điển DOM để TS hiểu window, document
     "types": ["chrome"],
     "removeComments": false,
-    "sourceMap": true // Sinh file map để dễ debug trên F12 Chrome
+    "sourceMap": true, // Sinh file map để dễ debug trên F12 Chrome
+    "skipLibCheck": true
   },
   "include": ["src/**/*"]
 }
