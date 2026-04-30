@@ -185,8 +185,6 @@ async function processAutoExactScan(
   typeTag: string,
   len: number,
 ) {
-  globalThis.logStatus("🤖 Mắt Thần đang đọc số trên màn hình...", "info");
-
   try {
     // KHÔNG CẦN QUAN TÂM NGƯỜI DÙNG NHẬP GÌ, ÉP BUỘC ĐỌC TỪ BOX
     const autoVal = await globalThis.autoReadScreenValue();
@@ -195,7 +193,7 @@ async function processAutoExactScan(
       return;
     }
 
-    globalThis.logStatus(`👁️ Mắt Thần chốt sổ: ${autoVal}`, "success");
+    globalThis.logStatus(`✅ Số trên màn hình hiện tại: ${autoVal}`, "info");
 
     validateExactValue(autoVal);
     await performExactScan(scanType, autoVal, view, typeTag, len);

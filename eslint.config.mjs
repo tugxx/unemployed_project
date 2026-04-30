@@ -11,6 +11,7 @@ export default defineConfig([
       "**/out/**",
       "build/**",
       "*.config.js",
+      "build.js",
     ],
   },
   {

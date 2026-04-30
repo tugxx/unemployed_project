@@ -1,3 +1,24 @@
+// Cấu trúc yêu cầu cắt ảnh từ Rust gửi sang
+interface CropRequest {
+  action: "crop" | "get_dict" | "set_dict";
+  reqId: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  dictData?: Record<string, string>;
+}
+
+// Cấu trúc phản hồi từ Content Script trả về Rust
+interface CropResponse {
+  reqId: string;
+  data: Uint8Array;
+  width?: number;
+  height?: number;
+  success?: boolean;
+  error?: string;
+}
+
 const url = globalThis.location.href;
 const isTrashFrame =
   /googleads|googlesyndication|adtrafficquality|doubleclick|2mdn\.net|recaptcha|safeframe|xd_handler|pixel|analytics|about:blank|about:srcdoc/i.test(
@@ -8,7 +29,8 @@ if (!isTrashFrame) {
   function injectScript(file: string): Promise<void> {
     return new Promise((resolve) => {
       const script = document.createElement("script");
-      script.src = chrome.runtime.getURL(file);
+      script.type = "module";
+      script.src = file;
       script.onload = () => {
         script.remove();
         resolve();
@@ -25,19 +47,113 @@ if (!isTrashFrame) {
         }`,
       );
 
-      const manifest = chrome.runtime.getManifest();
-      const webResources = manifest.web_accessible_resources as
-        | Array<{ resources: string[] }>
-        | undefined;
-      const injectScripts = webResources?.[0]?.resources || [];
-      // console.log("🎯 Danh sách file cần tiêm:", injectScripts); sonar
+      const wasmUrl = chrome.runtime.getURL("dist/core_engine_bg.wasm");
+      const initUrl = chrome.runtime.getURL("dist/core_init.bundle.js");
 
-      // Vòng lặp này giờ sẽ chỉ chạy đúng 1 lần cho cái file injected_main.bundle.js
-      for (const scriptPath of injectScripts) {
-        // console.log(`💉 Đang bắt đầu tiêm: ${scriptPath}`); sonar
-        await injectScript(scriptPath);
-        // console.log(`✅ Tiêm xong: ${scriptPath}`); sonar
-      }
+      const secretSessionId = crypto.randomUUID();
+      const Url = `${initUrl}?w=${encodeURIComponent(wasmUrl)}&s=${secretSessionId}`;
+
+      await injectScript(Url);
+
+      const channel = new MessageChannel();
+      channel.port1.onmessage = async (event: MessageEvent<CropRequest>) => {
+        const { action, reqId } = event.data;
+
+        if (action === "get_dict") {
+          const result = await chrome.storage.local.get("ocr_dict");
+          channel.port1.postMessage({
+            reqId,
+            data: result.ocr_dict || {},
+          });
+          return;
+        }
+
+        if (action === "set_dict") {
+          const { dictData } = event.data;
+          await chrome.storage.local.set({ ocr_dict: dictData });
+          channel.port1.postMessage({ reqId, success: true });
+          return;
+        }
+
+        if (action === "crop" || !action) {
+          const { x, y, w, h } = event.data;
+
+          chrome.runtime.sendMessage(
+            { action: "captureTab" },
+            async (response) => {
+              if (!response?.imgDataUrl) {
+                channel.port1.postMessage({ reqId, error: "Lỗi chụp ảnh" });
+                return;
+              }
+
+              try {
+                const img = new Image();
+                img.src = response.imgDataUrl;
+                await new Promise((resolve) => {
+                  img.onload = resolve;
+                });
+
+                const dpr = window.devicePixelRatio || 1;
+                const canvas = document.createElement("canvas");
+                canvas.width = w ?? 0;
+                canvas.height = h ?? 0;
+                const ctx = canvas.getContext("2d");
+
+                ctx!.drawImage(
+                  img,
+                  (x ?? 0) * dpr,
+                  (y ?? 0) * dpr,
+                  (w ?? 0) * dpr,
+                  (h ?? 0) * dpr,
+                  0,
+                  0,
+                  w ?? 0,
+                  h ?? 0,
+                );
+
+                const imageData = ctx!.getImageData(0, 0, w ?? 0, h ?? 0);
+                const uint8Array = new Uint8Array(imageData.data.buffer);
+
+                console.group("🔍 DEBUG CROP");
+                console.log(
+                  "Canvas Size:",
+                  imageData.width,
+                  "x",
+                  imageData.height,
+                );
+                console.log("Byte Array Length:", uint8Array.length);
+                console.log("Preview Link:", canvas.toDataURL());
+                console.groupEnd();
+
+                // Trả hàng qua đường ống
+                const successPayload: CropResponse = {
+                  reqId,
+                  data: uint8Array,
+                  width: imageData.width,
+                  height: imageData.height,
+                };
+                channel.port1.postMessage(successPayload);
+              } catch (error) {
+                const message =
+                  error instanceof Error ? error.message : "Unknown error";
+                channel.port1.postMessage({ reqId, error: message });
+              }
+            },
+          );
+        }
+      };
+
+      // 4. Mật mã bàn giao đường ống: Chỉ nghe đúng ám hiệu UUID
+      const handshakeListener = (e: MessageEvent<string>) => {
+        if (e.data === secretSessionId) {
+          window.removeEventListener("message", handshakeListener);
+          // Ném đầu ống (port2) sang cho Main World
+          window.postMessage(secretSessionId, globalThis.location.origin, [
+            channel.port2,
+          ]);
+        }
+      };
+      window.addEventListener("message", handshakeListener);
     } else {
       console.log(
         `🧰 WASM Hacker [OFF]: Đang ngủ đông tại -> ${
@@ -64,10 +180,6 @@ if (!isTrashFrame) {
         }
       } else {
         // ĐANG ON -> TẮT ĐI: Tự tay xóa UI và bắn tín hiệu ngầm
-
-        // 1. Xóa giao diện trực tiếp qua DOM (Cực kỳ an toàn)
-        const ui = document.getElementById("wasm-ce-ui");
-        if (ui) ui.remove();
 
         // 2. Bắn một Event xuyên qua rào cản thế giới để báo cho file Core
         document.dispatchEvent(new CustomEvent("WASM_HACKER_SHUTDOWN"));

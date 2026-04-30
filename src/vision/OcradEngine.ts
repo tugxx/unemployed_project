@@ -1,30 +1,18 @@
-// File: TesseractEngine.ts
-import Tesseract, { PSM } from "tesseract.js";
 import { IOcrEngine } from "./IOcrEngine";
 
-export class TesseractEngine implements IOcrEngine {
-  private worker: Tesseract.Worker | null = null;
-  private isInitialized = false;
+declare const OCRAD: (
+  image: ImageData | HTMLCanvasElement | HTMLImageElement,
+) => string;
+
+export class OcradEngine implements IOcrEngine {
+  private readonly workspaceCanvas = document.createElement("canvas");
+  private readonly workspaceCtx = this.workspaceCanvas.getContext("2d", {
+    willReadFrequently: true,
+  });
 
   async init(): Promise<void> {
-    if (this.isInitialized) return;
-
-    globalThis.logStatus("⏳ Đang tải model Tesseract", "info");
-
-    try {
-      const worker = await Tesseract.createWorker("eng", 1);
-
-      await worker.setParameters({
-        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-      });
-
-      this.worker = worker;
-      this.isInitialized = true;
-      globalThis.logStatus("✅ Tesseract AI đã sẵn sàng!", "info");
-    } catch (error) {
-      console.error("Lỗi khởi tạo Tesseract:", error);
-      globalThis.logStatus("❌ Lỗi khởi tạo Tesseract AI", "error");
-    }
+    // Ocrad không cần tải data, khởi tạo ngay lập tức
+    console.log("⚡ Ocrad Engine đã sẵn sàng!");
   }
 
   private calculateHistogramAndGrays(
@@ -133,15 +121,9 @@ export class TesseractEngine implements IOcrEngine {
   }
 
   async recognize(imageData: ImageData): Promise<number[] | null> {
-    if (!this.worker) {
-      console.error("Tesseract chưa được khởi tạo! Hãy gọi init() trước.");
-      return null;
-    }
-
     try {
       const processedImageData = this.preprocessImageForOCR(imageData);
 
-      // Tesseract.js trên trình duyệt nhận DataURL hoặc Canvas
       const tempCanvas = document.createElement("canvas");
       tempCanvas.width = imageData.width;
       tempCanvas.height = imageData.height;
@@ -156,15 +138,19 @@ export class TesseractEngine implements IOcrEngine {
       const padding = 20; // Bơm thêm viền trắng 20px xung quanh để tránh Hội chứng Tight Crop
 
       // 4. TẠO CANVAS CHÍNH (Đã được buff kích thước)
-      const canvas = document.createElement("canvas");
-      canvas.width = imageData.width * scale + padding * 2;
-      canvas.height = imageData.height * scale + padding * 2;
-      const ctx = canvas.getContext("2d");
+      this.workspaceCanvas.width = imageData.width * scale + padding * 2;
+      this.workspaceCanvas.height = imageData.height * scale + padding * 2;
+      const ctx = this.workspaceCtx;
       if (!ctx) return null;
 
       // 5. ĐỔ NỀN TRẮNG TOÀN BỘ (Cực kỳ quan trọng để tạo Padding)
       ctx.fillStyle = "#FFFFFF";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(
+        0,
+        0,
+        this.workspaceCanvas.width,
+        this.workspaceCanvas.height,
+      );
 
       // 6. Tắt tính năng làm mờ ảnh của trình duyệt (Giữ cho font Pixel game sắc cạnh, không bị nhòe khi phóng to)
       ctx.imageSmoothingEnabled = false;
@@ -178,44 +164,31 @@ export class TesseractEngine implements IOcrEngine {
         imageData.height * scale,
       );
 
-      const dataUrl = canvas.toDataURL("image/png");
+      const text = OCRAD(this.workspaceCanvas);
+      globalThis.logStatus(`Ocrad nhận diện được text: "${text}"`, "info");
 
-      // Bắt đầu nhận diện
-      const {
-        data: { text },
-      } = await this.worker.recognize(dataUrl);
-      globalThis.logStatus("[Tesseract Raw]:", text);
+      let fixText = text.replaceAll(/[Oo]/g, "0").replaceAll(/[lI]/g, "1");
 
-      const fixText = text.replaceAll(/[Oo]/g, "0").replaceAll(/[lI]/g, "1");
+      fixText = fixText.replaceAll(/[,.]/g, "");
 
-      // Lọc sạch mọi thứ, chỉ giữ lại số (đề phòng whitelist vẫn lọt rác)
       const matchedNumbers = fixText.match(/\d+/g);
 
       if (!matchedNumbers || matchedNumbers.length === 0) {
-        // Trả về null nếu không thấy con số nào (Chỉ có icon hoặc chữ)
         return null;
       }
 
       const results = matchedNumbers.map((numStr) =>
         Number.parseInt(numStr, 10),
       );
-      globalThis.logStatus(
-        `✅ Quét được ${results.length} số: ${results.join(", ")}`,
-        "success",
-      );
 
       return results;
     } catch (error) {
-      console.error("Lỗi khi đọc ảnh bằng Tesseract:", error);
+      console.error("Lỗi khi chạy Ocrad:", error);
       return null;
     }
   }
 
   async terminate(): Promise<void> {
-    if (this.worker) {
-      await this.worker.terminate();
-      this.worker = null;
-      this.isInitialized = false;
-    }
+    // Không có worker để đóng, hàm này để trống cũng được
   }
 }

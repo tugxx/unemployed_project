@@ -26,7 +26,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dist/core.bundle.js"],
+      "resources": ["dist/core_init.bundle.js", "dist/core_engine_bg.wasm"],
       "matches": [
         "*://*.poki.com/*",
         "*://*.crazygames.com/*",

@@ -256,7 +256,7 @@ globalThis.BinaryMatcher = {
         "warning",
       );
       // In chuỗi kết quả lỗi ra console để soi: ví dụ "1?0"
-      console.log("Dữ liệu nhận diện lỗi:", rawString);
+      globalThis.logStatus("Dữ liệu nhận diện lỗi:", rawString);
       return null;
     }
 

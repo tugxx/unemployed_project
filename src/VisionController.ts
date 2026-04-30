@@ -1,10 +1,13 @@
 import { IOcrEngine } from "./vision/IOcrEngine";
-import { TesseractEngine } from "./vision/TesseractEngine";
+import { TesseractEngine } from "./vision/TesseractEngine"; // sonar
 import { updateDebugView } from "./utils/debug";
+// import { OcradEngine } from "./vision/OcradEngine"; sonar
+// import { BinaryMatcher } from "./vision/binary_matcher"; sonar
 
 // const IS_DEBUG_VISION = false; sonar
-// globalThis.currentOcrEngine = new BinaryTemplateEngine() as IOcrEngine; sonar
-globalThis.currentOcrEngine = new TesseractEngine() as IOcrEngine;
+// globalThis.currentOcrEngine = new BinaryMatcher() as IOcrEngine; sonar
+globalThis.currentOcrEngine = new TesseractEngine() as IOcrEngine; // sonar
+// globalThis.currentOcrEngine = new OcradEngine() as IOcrEngine; sonar
 
 globalThis.autoReadScreenValue = async function (): Promise<number | null> {
   // 1. Nếu chưa khoanh vùng, yêu cầu người dùng khoanh ngay lập tức
@@ -41,20 +44,26 @@ globalThis.autoReadScreenValue = async function (): Promise<number | null> {
 
   const result = await globalThis.currentOcrEngine.recognize(imageData);
 
+  if (result && result.length > 1) {
+    globalThis.logStatus(
+      `Phát hiện ${result.length} số, sẽ chọn ra số đầu tiên: ${result[0]}`,
+      "warning",
+    );
+  }
+
   // 5. Xử lý kết quả trả về
   if (result === null) {
     globalThis.logStatus(
-      "⚠️ Mắt Thần không đọc được số nào. Có thể vùng khoanh bị lệch. Đang reset vùng chọn...",
+      "⚠️ Không đọc được số nào. Có thể vùng khoanh bị lệch.",
       "error",
     );
     // Tự phục hồi: Xóa box lỗi để người dùng khoanh lại
-    globalThis.visionBox = null;
-    document.getElementById("ce-persistent-box")?.remove();
+    // globalThis.visionBox = null;
+    // document.getElementById("ce-persistent-box")?.remove();
     return null;
   }
 
-  globalThis.logStatus(`✅ Mắt Thần chốt số: ${result}`, "info");
-  return result;
+  return result[0];
 };
 
 function renderPersistentBox(box: {
@@ -101,10 +110,7 @@ async function captureAndCrop(box: {
 }): Promise<ImageData | null> {
   if (!box) return null;
 
-  globalThis.logStatus(
-    "📸 Đang chụp ảnh màn hình để xuyên thủng WebGL...",
-    "info",
-  );
+  globalThis.logStatus("📸 Đang chụp ảnh màn hình", "info");
   const dataUrl = await new Promise<string>((resolve, reject) => {
     // Tạo ID ngẫu nhiên để không bị lẫn lộn nếu ấn liên tục
     const messageId = Math.random().toString(36).substring(2);

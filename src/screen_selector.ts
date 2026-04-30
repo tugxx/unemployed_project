@@ -3,7 +3,7 @@
 // Nhiệm vụ: Phủ mờ màn hình, cho phép kéo thả để lấy tọa độ (x, y, w, h)
 // ============================================================================
 
-globalThis.startScreenSelection = function (): Promise<{
+export async function startScreenSelection(): Promise<{
   x: number;
   y: number;
   width: number;
@@ -112,4 +112,40 @@ globalThis.startScreenSelection = function (): Promise<{
     overlay.addEventListener("mouseup", onMouseUp);
     document.addEventListener("keydown", onKeyDown);
   });
-};
+}
+
+export function renderPersistentBox(box: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) {
+  let persistentBox = document.getElementById(
+    "ce-persistent-box",
+  ) as HTMLDivElement | null;
+
+  if (!persistentBox) {
+    persistentBox = document.createElement("div");
+    persistentBox.id = "ce-persistent-box";
+
+    // pointer-events: none là cực kỳ quan trọng để không cản trở click chuột vào game
+    persistentBox.style.cssText = `
+      position: fixed;
+      border: 2px dashed #00ff88;
+      background: rgba(0, 255, 136, 0.05);
+      z-index: 9999998;
+      pointer-events: none;
+      box-sizing: border-box;
+      box-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+      transition: all 0.15s ease-out;
+    `;
+
+    document.body.appendChild(persistentBox);
+  }
+
+  // Cập nhật vị trí và kích thước theo box mới nhất
+  persistentBox.style.left = box.x + "px";
+  persistentBox.style.top = box.y + "px";
+  persistentBox.style.width = box.width + "px";
+  persistentBox.style.height = box.height + "px";
+}

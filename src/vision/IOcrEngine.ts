@@ -9,5 +9,5 @@ export interface IOcrEngine {
   /**
    * Nhận vào ảnh đã crop và trả về con số.
    */
-  recognize(imageData: ImageData): Promise<number | null>;
+  recognize(imageData: ImageData): Promise<number[] | null>;
 }

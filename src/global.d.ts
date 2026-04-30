@@ -52,15 +52,8 @@ declare global {
     recognize: (imageData: ImageData) => Promise<number | null>;
     ensureTrained: (digits: BinaryTemplate[]) => Promise<boolean>;
   };
-  var startScreenSelection: () => Promise<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>;
   var autoReadScreenValue: () => Promise<number | null>;
-  var showTrainingUI: (
-    digits: BinaryTemplate[],
-    guesses: string[],
-  ) => Promise<boolean>;
+  var wasmShowTrainingUI: (jsonStr: string) => Promise<boolean>;
+  var wasmSelectArea: () => Promise<Float64Array | null>;
+  var wasmPromptUnknownHash: (hashStr: string) => Promise<string | null>;
 }
