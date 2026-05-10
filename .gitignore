@@ -36,6 +36,7 @@ desktop.ini
 docx/
 
 core_engine/target/
+core_engine/Cargo.lock
 
 data/
 
