@@ -36,3 +36,7 @@ desktop.ini
 docx/
 
 core_engine/target/
+
+data/
+
+native_host/

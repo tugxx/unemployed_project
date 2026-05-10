@@ -3,7 +3,7 @@
   "name": "WASM Hacker Pro",
   "version": "1.0",
   "description": "Auto Injector & RAM Scanner cho Web Game",
-  "permissions": ["storage", "action", "activeTab"],
+  "permissions": ["action", "activeTab", "nativeMessaging", "debugger", "tabs"],
   "action": {
     "default_title": "Bật/Tắt bảng điều khiển"
   },
@@ -13,27 +13,53 @@
   "content_scripts": [
     {
       "matches": [
+        "*://*.y8.com/*",
         "*://*.poki.com/*",
         "*://*.crazygames.com/*",
-        "*://*.y8.com/*",
-        "*://localhost/*",
-        "*://127.0.0.1/*"
+        "*://*.itch.io/*"
       ],
-      "all_frames": false,
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start",
+      "js": ["dist/anti_pause.bundle.js"],
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://*.y8.com/*",
+        "*://*.poki.com/*",
+        "*://*.crazygames.com/*",
+        "*://*.itch.io/*"
+      ],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start",
+      "js": ["dist/core_init.bundle.js"],
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://*.y8.com/*",
+        "*://*.poki.com/*",
+        "*://*.crazygames.com/*",
+        "*://*.itch.io/*"
+      ],
+      "all_frames": true,
+      "match_about_blank": true,
       "run_at": "document_start",
       "js": ["dist/content.bundle.js"]
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dist/core_init.bundle.js", "dist/core_engine_bg.wasm"],
+      "resources": ["dist/core_engine_bg.wasm"],
       "matches": [
+        "*://*.y8.com/*",
         "*://*.poki.com/*",
         "*://*.crazygames.com/*",
-        "*://*.y8.com/*",
-        "*://localhost/*",
-        "*://127.0.0.1/*"
-      ]
+        "*://*.itch.io/*"
+      ],
+      "use_dynamic_url": true
     }
   ]
 }

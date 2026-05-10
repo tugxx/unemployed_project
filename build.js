@@ -30,6 +30,14 @@ async function buildAll() {
       entryPoints: ["src/background.ts"],
       outfile: "dist/background.bundle.js",
     });
+
+    await esbuild.build({
+      ...commonConfig,
+      entryPoints: ["src/anti_pause.ts"],
+      outfile: "dist/anti_pause.bundle.js",
+      // Không cần format: "esm" vì file này chỉ chạy script thuần túy hack Prototype,
+      // không load WASM trực tiếp.
+    });
   } catch (err) {
     console.error("❌ Lỗi trong quá trình build:", err);
     process.exit(1);

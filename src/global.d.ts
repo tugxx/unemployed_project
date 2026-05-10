@@ -56,4 +56,12 @@ declare global {
   var wasmShowTrainingUI: (jsonStr: string) => Promise<boolean>;
   var wasmSelectArea: () => Promise<Float64Array | null>;
   var wasmPromptUnknownHash: (hashStr: string) => Promise<string | null>;
+
+  var __antiPauseInjected: boolean | undefined;
+
+  var gdsdk:
+    | {
+        pause?: () => void;
+      }
+    | undefined;
 }
