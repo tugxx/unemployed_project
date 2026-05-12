@@ -58,7 +58,6 @@ declare global {
   var wasmPromptUnknownHash: (hashStr: string) => Promise<string | null>;
 
   var __antiPauseInjected: boolean | undefined;
-
   var gdsdk:
     | {
         pause?: () => void;

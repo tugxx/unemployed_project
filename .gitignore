@@ -36,8 +36,11 @@ desktop.ini
 docx/
 
 core_engine/target/
-core_engine/Cargo.lock
 
 data/
 
 native_host/
+
+fonts/
+
+training_real_data/

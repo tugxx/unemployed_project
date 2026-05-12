@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
 
-// Struct lưu trữ tọa độ thay cho globalThis.visionBox
 #[derive(Clone, Copy)]
 pub struct VisionBox {
     pub x: i32,

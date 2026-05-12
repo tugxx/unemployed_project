@@ -1,451 +1,340 @@
+use image::imageops::FilterType;
+use image::{ImageBuffer, Luma};
 use lazy_static::lazy_static;
 use rayon::prelude::*;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::app_log;
+use crate::ui::OcrDebugBag;
+
 lazy_static! {
     static ref DICTIONARY: Mutex<HashMap<[u8; 64], char>> = Mutex::new(HashMap::new());
 }
 
-// #[wasm_bindgen]
-// pub fn learn_hash(hash_hex: String, character: char) {
-//     // 1. Kiểm tra an toàn: Chuỗi phải dài đúng 128 ký tự (64 ô * 2 ký tự Hex)
-//     if hash_hex.len() != 128 {
-//         return; // Bỏ qua nếu dữ liệu rác
-//     }
+pub fn save_training_data(pixels: &[u8], width: usize, height: usize, label: &str) {
+    let Some(img) = ImageBuffer::<Luma<u8>, _>::from_raw(width as u32, height as u32, pixels)
+    else {
+        app_log!("❌ Không tạo được ImageBuffer");
+        return;
+    };
 
-//     // 2. Dịch ngược chuỗi Hex về lại mảng [u8; 64]
-//     let mut vector = [0u8; 64];
-//     for i in 0..64 {
-//         let start = i * 2;
-//         let end = start + 2;
-
-//         // Cắt từng cặp 2 ký tự (VD: "ff", "a0") và ép về số nguyên u8
-//         if let Ok(val) = u8::from_str_radix(&hash_hex[start..end], 16) {
-//             vector[i] = val;
-//         } else {
-//             return; // Nếu parse lỗi (chứa ký tự lạ), hủy thao tác
-//         }
-//     }
-
-//     // 3. Nhét vào từ điển (DICTIONARY giờ đây nhận Key là [u8; 64])
-//     if let Ok(mut dict) = DICTIONARY.lock() {
-//         dict.insert(vector, character);
-//     }
-// }
-
-pub fn lookup_vector_fuzzy(target_vector: &[u8; 64], max_diff: u32) -> Option<char> {
-    if let Ok(dict) = DICTIONARY.lock() {
-        let mut best_match = None;
-        let mut min_diff = max_diff + 1;
-
-        for (known_vector, &character) in dict.iter() {
-            // Phép toán đo khoảng cách Manhattan (Sum of Absolute Differences)
-            // Tính tổng độ chênh lệch màu của từng ô 8x8 một cách siêu tốc
-            let diff: u32 = target_vector
-                .iter()
-                .zip(known_vector.iter())
-                .map(|(&a, &b)| a.abs_diff(b) as u32)
-                .sum();
-
-            if diff < min_diff {
-                min_diff = diff;
-                best_match = Some(character);
-            }
-        }
-
-        if min_diff <= max_diff {
-            return best_match;
+    // 3. Tạo thư mục nếu chưa có
+    let base_dir = "../../../training_real_data";
+    match std::fs::create_dir_all(base_dir) {
+        Ok(_) => {}
+        Err(e) => {
+            app_log!("❌ Tạo thư mục thất bại: {} | Lỗi: {}", base_dir, e);
+            return;
         }
     }
-    None
+
+    // 4. Lưu ảnh với định dạng: [nhãn]_[id_ngẫu_nhiên].png
+    // Ví dụ: training_data/2, 999, 3_12345.png
+    let uuid = uuid::Uuid::new_v4().simple().to_string();
+    let filename = format!("{}/{}_{}.png", base_dir, label, &uuid[0..6]);
+
+    match img.save(&filename) {
+        Ok(_) => app_log!("✅ Đã lưu: {}", filename),
+        Err(e) => {
+            app_log!("❌ Lưu thất bại: {} | Lỗi: {}", filename, e);
+        }
+    }
 }
 
-// pub fn binarize_adaptive(gray: &[u8], width: usize, height: usize) -> Vec<bool> {
-//     let mut bits = vec![false; width * height];
-//     let mut integral_image = vec![0u32; width * height];
-//     let total_pixels = (width * height) as u32;
+pub fn to_grayscale(rgba: &[u8], _width: usize, _height: usize) -> Vec<u8> {
+    // Bước 1: Xám hóa chuẩn Luma (như cũ của bác)
+    let mut gray: Vec<u8> = rgba
+        .par_chunks(4)
+        .map(|p| (p[0] as f32 * 0.299 + p[1] as f32 * 0.587 + p[2] as f32 * 0.114) as u8)
+        .collect();
 
-//     // Bước 1: Tạo Integral Image (Ảnh tích phân) - Chỉ tốn 1 lần quét duy nhất
-//     for y in 0..height {
-//         let mut row_sum = 0u32;
-//         for x in 0..width {
-//             row_sum += gray[y * width + x] as u32;
-//             if y == 0 {
-//                 integral_image[y * width + x] = row_sum;
-//             } else {
-//                 integral_image[y * width + x] = integral_image[(y - 1) * width + x] + row_sum;
-//             }
-//         }
-//     }
+    // Bước 2: Tìm Min và Max để căng độ tương phản
+    let (&min, &max) = match (gray.par_iter().min(), gray.par_iter().max()) {
+        (Some(min), Some(max)) => (min, max),
+        _ => return gray,
+    };
 
-//     // Bước 2: AI Ước lượng cực tính (Polarity Estimation)
-//     // Lấy tổng độ sáng (chính là phần tử cuối cùng của mảng tích phân) chia cho tổng pixel
-//     let global_sum = integral_image[(height - 1) * width + (width - 1)];
-//     let global_mean = global_sum / total_pixels;
+    // Nếu ảnh quá phẳng (không có độ tương phản), thoát sớm
+    if max <= min {
+        return gray;
+    }
 
-//     let mut light_pixel_count = 0;
-//     for &p in gray {
-//         if (p as u32) > global_mean {
-//             light_pixel_count += 1;
-//         }
-//     }
+    // Bước 3: Căng dải màu ra toàn bộ dải [0, 255]
+    // Công thức: I_out = (I_in - min) * 255 / (max - min)
+    gray.par_iter_mut().for_each(|pixel| {
+        let stretched = (*pixel as f32 - min as f32) * 255.0 / (max - min) as f32;
+        *pixel = stretched.clamp(0.0, 255.0) as u8;
+    });
 
-//     // AI Quyết định: Nếu pixel sáng là thiểu số, thì ảnh này là Chữ Sáng - Nền Tối
-//     let is_light_text = light_pixel_count < (total_pixels / 2);
+    gray
+}
 
-//     let s = (width / 8).max(2) as i32;
-//     let t = 10;
-
-//     for y in 0..height {
-//         for x in 0..width {
-//             let y1 = (y as i32 - s).max(0) as usize;
-//             let y2 = (y as i32 + s).min(height as i32 - 1) as usize;
-//             let x1 = (x as i32 - s).max(0) as usize;
-//             let x2 = (x as i32 + s).min(width as i32 - 1) as usize;
-
-//             // Tính tổng vùng 1 cửa sổ chỉ bằng 4 điểm trên Integral Image
-//             let count = (x2 - x1) * (y2 - y1);
-//             if count == 0 {
-//                 continue;
-//             }
-
-//             let sum = integral_image[y2 * width + x2]
-//                 - integral_image[y1 * width + x2]
-//                 - integral_image[y2 * width + x1]
-//                 + integral_image[y1 * width + x1];
-
-//             let pixel = gray[y * width + x] as u32;
-
-//             if is_light_text {
-//                 // Chữ sáng, nền tối: Tìm pixel SÁNG hơn trung bình vùng
-//                 if pixel * (count as u32) > sum * (100 + t) / 100 {
-//                     bits[y * width + x] = true;
-//                 }
-//             } else {
-//                 // Chữ tối, nền sáng: Tìm pixel TỐI hơn trung bình vùng
-//                 if pixel * (count as u32) < sum * (100 - t) / 100 {
-//                     bits[y * width + x] = true;
-//                 }
-//             }
-//         }
-//     }
-//     bits
-// }
-
-// 2. Tách các chữ số dựa vào các cột trống (Không có pixel nào là true)
-pub fn segment_characters(
-    bits: &[bool],
+// Hàm nội suy phóng to ảnh Xám
+pub fn upscale_gray(
+    gray: &[u8],
     width: usize,
     height: usize,
-) -> Vec<(usize, usize, usize, usize)> {
-    let mut visited = vec![false; width * height];
-    let mut boxes = Vec::new();
+    scale: u32,
+) -> (Vec<u8>, usize, usize) {
+    let new_w = width as u32 * scale;
+    let new_h = height as u32 * scale;
 
-    // 8 hướng di chuyển để loang màu (Trái, Phải, Lên, Xuống và 4 góc chéo)
-    let dirs = [
-        (-1, -1),
-        (0, -1),
-        (1, -1),
-        (-1, 0),
-        (1, 0),
-        (-1, 1),
-        (0, 1),
-        (1, 1),
-    ];
+    // 1. Chuyển mảng &[u8] thành cấu trúc ảnh 1 kênh màu (Luma) của crate `image`
+    if let Some(img) =
+        ImageBuffer::<Luma<u8>, _>::from_raw(width as u32, height as u32, gray.to_vec())
+    {
+        // 2. Phóng to bằng thuật toán CatmullRom (Bicubic) - Giữ nét chữ cực mượt
+        let resized = image::imageops::resize(&img, new_w, new_h, FilterType::CatmullRom);
 
-    for y in 0..height {
-        for x in 0..width {
-            let idx = y * width + x;
-
-            // Nếu gặp pixel sáng và chưa từng ghé thăm -> Bắt đầu loang màu!
-            if bits[idx] && !visited[idx] {
-                let mut queue = vec![(x, y)];
-                visited[idx] = true;
-
-                // Lưu lại tọa độ để vẽ Hộp bao (Bounding Box)
-                let mut min_x = x;
-                let mut max_x = x;
-                let mut min_y = y;
-                let mut max_y = y;
-                let mut area = 0; // Diện tích (số pixel thực tế của chữ)
-
-                // Vòng lặp BFS (Breadth-First Search) loang màu
-                while let Some((cx, cy)) = queue.pop() {
-                    area += 1;
-
-                    for &(dx, dy) in &dirs {
-                        let nx = cx as isize + dx;
-                        let ny = cy as isize + dy;
-
-                        // Kiểm tra xem có bị tràn viền không
-                        if nx >= 0 && nx < width as isize && ny >= 0 && ny < height as isize {
-                            let nx = nx as usize;
-                            let ny = ny as usize;
-                            let n_idx = ny * width + nx;
-
-                            // Nếu pixel bên cạnh cũng sáng -> Ăn luôn!
-                            if bits[n_idx] && !visited[n_idx] {
-                                visited[n_idx] = true;
-                                queue.push((nx, ny));
-
-                                // Cập nhật lại khung chữ nhật bao quanh
-                                if nx < min_x {
-                                    min_x = nx;
-                                }
-                                if nx > max_x {
-                                    max_x = nx;
-                                }
-                                if ny < min_y {
-                                    min_y = ny;
-                                }
-                                if ny > max_y {
-                                    max_y = ny;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let box_w = max_x - min_x + 1;
-                let box_h = max_y - min_y + 1;
-
-                // --- BỘ LỌC TÀN KHỐC (Xử lý nhiễu & viền nét đứt) ---
-                // Chỉ nhận những hòn đảo:
-                // 1. Diện tích > 5 pixel (Lọc điểm nhiễu lấm tấm)
-                // 2. Chiều cao > 4 pixel (Lọc nét đứt ngang của UI)
-                // 3. Tỷ lệ không được quá dị dạng (Tùy chọn, có thể thêm sau)
-                if area > 5 && box_h > 4 {
-                    boxes.push((min_x, min_y, box_w, box_h));
-                }
-            }
-        }
+        // 3. Trả về mảng byte mới kèm kích thước mới
+        return (resized.into_raw(), new_w as usize, new_h as usize);
     }
 
-    // CỰC KỲ QUAN TRỌNG: Loang màu xong thì các chữ số có thể bị lộn xộn thứ tự.
-    // Ta phải sắp xếp lại các hộp từ Trái sang Phải (theo min_x) để đọc chữ không bị ngược.
-    boxes.sort_by_key(|a| a.0);
-    boxes
+    // Nếu lỗi thì trả về ảnh gốc (an toàn)
+    (gray.to_vec(), width, height)
 }
 
-// Hàm hỗ trợ chuyển RGBA sang Grayscale (Ảnh xám)
-pub fn to_grayscale(rgba: &[u8], _width: usize, _height: usize) -> Vec<u8> {
-    rgba.par_chunks(4)
-        .map(|pixel| {
-            let r = pixel[0] as f32;
-            let g = pixel[1] as f32;
-            let b = pixel[2] as f32;
-            // Ép kiểu trực tiếp từng pixel độc lập
-            (r * 0.299 + g * 0.587 + b * 0.114) as u8
-        })
-        .collect()
-}
-
-// 🚀 THUẬT TOÁN MỚI: Trích xuất vector đặc trưng 64 chiều (Average Pooling)
-pub fn generate_density_vector(
-    gray: &[u8],
-    orig_width: usize,
-    char_box: (usize, usize, usize, usize),
-) -> [u8; 64] {
-    let (bx, by, bw, bh) = char_box;
-    let mut vector = [0; 64];
-
-    // Tính kích thước của 1 "khối" trong ảnh gốc
-    let cell_w = (bw as f32 / 8.0).max(1.0);
-    let cell_h = (bh as f32 / 8.0).max(1.0);
-
-    for y in 0..8 {
-        for x in 0..8 {
-            let start_x = bx + (x as f32 * cell_w) as usize;
-            let start_y = by + (y as f32 * cell_h) as usize;
-
-            let end_x = (bx + ((x + 1) as f32 * cell_w).ceil() as usize).min(bx + bw);
-            let end_y = (by + ((y + 1) as f32 * cell_h).ceil() as usize).min(by + bh);
-
-            let mut pixel_sum: u32 = 0;
-            let mut pixel_count: u32 = 0;
-
-            // Quét AVERAGE POOLING: Cộng dồn giá trị độ sáng của mọi pixel trong khối
-            for cy in start_y..end_y {
-                for cx in start_x..end_x {
-                    // Chú ý: Ở ảnh xám, chữ thường là màu sáng (giá trị cao) trên nền tối.
-                    // Nếu game của đại ca chữ đen nền trắng, đại ca phải đảo ngược lại (255 - pixel).
-                    let pixel_val = gray[cy * orig_width + cx];
-                    pixel_sum += pixel_val as u32;
-                    pixel_count += 1;
-                }
-            }
-
-            // Tính trung bình mật độ (Scale về từ 0.0 đến 1.0)
-            if let Some(avg) = pixel_sum.checked_div(pixel_count) {
-                let vector_index = y * 8 + x;
-                vector[vector_index] = avg as u8;
-            }
-        }
-    }
-
-    vector
-}
-
-pub fn top_hat_text_extractor(gray: &[u8], width: usize, height: usize) -> Vec<bool> {
-    let size = width * height;
-
-    // Kích thước chổi quét. Offset = 2 tức là chổi quét 5x5 pixel.
-    // Đủ to để nuốt chửng nét chữ mỏng, và đủ nhỏ để Icon sống sót.
-    let offset = 2i32;
-
-    // 1. Erode - Tìm giá trị TỐI NHẤT trong vùng
-    let mut eroded = vec![0u8; size];
-    eroded
-        .par_chunks_mut(width) // Chia output thành các dòng
-        .enumerate()
-        .for_each(|(y, row)| {
-            for x in 0..width as i32 {
-                let mut min_val = 255u8;
-                for ky in -offset..=offset {
-                    for kx in -offset..=offset {
-                        let ny = (y as i32 + ky).clamp(0, height as i32 - 1) as usize;
-                        let nx = (x + kx).clamp(0, width as i32 - 1) as usize;
-                        let val = gray[ny * width + nx];
-                        if val < min_val {
-                            min_val = val;
-                        }
-                    }
-                }
-                row[x as usize] = min_val;
-            }
-        });
-
-    // 2. ĐẮP BỘT (Dilate) - Tìm giá trị SÁNG NHẤT trong vùng bị gọt
-    let mut opened = vec![0u8; size];
-    opened
-        .par_chunks_mut(width)
-        .enumerate()
-        .for_each(|(y, row)| {
-            for x in 0..width as i32 {
-                let mut max_val = 0u8;
-                for ky in -offset..=offset {
-                    for kx in -offset..=offset {
-                        let ny = (y as i32 + ky).clamp(0, height as i32 - 1) as usize;
-                        let nx = (x + kx).clamp(0, width as i32 - 1) as usize;
-                        let val = eroded[ny * width + nx];
-                        if val > max_val {
-                            max_val = val;
-                        }
-                    }
-                }
-                row[x as usize] = max_val;
-            }
-        });
-
-    // 3. PHÉP TRỪ (Top-Hat = Gốc - Opened)
-    gray.par_iter()
-        .zip(opened.par_iter())
-        .map(|(&g, &o)| g.saturating_sub(o) > 30)
-        .collect()
-}
-
-// // Thuật toán chuẩn cộng đồng: Gom các Box nằm gần nhau thành 1
-// pub fn merge_nearby_boxes(
-//     boxes: &[(usize, usize, usize, usize)],
-//     distance: usize // Khoảng cách tối đa để 2 mảnh vỡ được coi là 1 chữ (thường là 1 hoặc 2 pixel)
-// ) -> Vec<(usize, usize, usize, usize)> {
-//     let mut merged: Vec<(usize, usize, usize, usize)> = Vec::new();
-//     let mut used = vec![false; boxes.len()];
-
-//     for i in 0..boxes.len() {
-//         if used[i] { continue; }
-
-//         let (mut x1, mut y1, mut w1, mut h1) = boxes[i];
-//         let mut r1 = x1 + w1;
-//         let mut b1 = y1 + h1;
-
-//         let mut changed = true;
-//         while changed {
-//             changed = false;
-//             for j in 0..boxes.len() {
-//                 if i == j || used[j] { continue; }
-
-//                 let (x2, y2, w2, h2) = boxes[j];
-//                 let r2 = x2 + w2;
-//                 let b2 = y2 + h2;
-
-//                 // Kiểm tra xem 2 hộp có nằm gần nhau trong phạm vi 'distance' không
-//                 // Công thức kiểm tra giao nhau mở rộng (Expanded Intersection)
-//                 let overlap_x = !(r1 + distance < x2 || x1 > r2 + distance);
-//                 let overlap_y = !(b1 + distance < y2 || y1 > b2 + distance);
-
-//                 if overlap_x && overlap_y {
-//                     // Nếu gần nhau -> Nuốt chửng hộp j vào hộp i
-//                     x1 = x1.min(x2);
-//                     y1 = y1.min(y2);
-//                     r1 = r1.max(r2);
-//                     b1 = b1.max(b2);
-//                     w1 = r1 - x1;
-//                     h1 = b1 - y1;
-
-//                     used[j] = true;
-//                     changed = true; // Quét lại xem cái hộp to này có nuốt thêm được ai nữa không
-//                 }
-//             }
+// // Một bộ lọc Box Blur 3x3 đơn giản để làm mịn nhiễu trước khi threshold
+// pub fn box_blur(gray: &[u8], width: usize, height: usize) -> Vec<u8> {
+//     let mut out = vec![0u8; gray.len()];
+//     for y in 1..height - 1 {
+//         for x in 1..width - 1 {
+//             let sum: u32 = gray[(y - 1) * width + (x - 1)] as u32
+//                 + gray[(y - 1) * width + x] as u32
+//                 + gray[(y - 1) * width + (x + 1)] as u32
+//                 + gray[y * width + (x - 1)] as u32
+//                 + gray[y * width + x] as u32
+//                 + gray[y * width + (x + 1)] as u32
+//                 + gray[(y + 1) * width + (x - 1)] as u32
+//                 + gray[(y + 1) * width + x] as u32
+//                 + gray[(y + 1) * width + (x + 1)] as u32;
+//             out[y * width + x] = (sum / 9) as u8;
 //         }
-//         merged.push((x1, y1, w1, h1));
 //     }
-
-//     // Trả về danh sách các hộp đã được gom lại
-//     // Đồng thời sắp xếp lại từ trái qua phải để đọc chữ cho đúng thứ tự
-//     merged.sort_by_key(|box_tuple| box_tuple.0);
-//     merged
+//     out
 // }
 
-pub fn recognize_sequence(rgba: &[u8], width: usize, height: usize) -> (String, String) {
-    let gray = to_grayscale(rgba, width, height);
-    let bits = top_hat_text_extractor(&gray, width, height);
-    let char_boxes = segment_characters(&bits, width, height);
+pub fn adaptive_threshold(gray: &[u8], width: usize, height: usize) -> Vec<bool> {
+    let mut result = vec![false; gray.len()];
+    let s = (width / 8) as i32; // Kích thước vùng lân cận (tùy chỉnh theo font chữ)
+    let t = 15; // Ngưỡng phần trăm (tối hơn 15% so với nền thì là chữ)
 
-    let mut result_string = String::new();
-    let mut unknown_json_objects = Vec::new();
-
-    // Bước 3: Ép khuôn & Tra sổ tay
-    for c_box in char_boxes {
-        let (bx, by, bw, bh) = c_box;
-        // if bw < 3 || bh < 5 {
-        //     crate::logger("   -> ❌ Bị loại vì kích thước quá nhỏ!");
-        //     continue;
-        // }
-
-        // Nén khối mật độ từ ảnh XÁM
-        let vector = generate_density_vector(&gray, width, c_box);
-
-        if let Some(known_char) = lookup_vector_fuzzy(&vector, 2000) {
-            // Đã biết -> Nhét vào chuỗi kết quả
-            result_string.push(known_char);
-        } else {
-            // Chưa biết -> Báo lỗi chấm hỏi và lưu mã Hash lại
-            result_string.push('?');
-
-            let mut pixels = Vec::with_capacity(bw * bh);
-            for y in 0..bh {
-                for x in 0..bw {
-                    let is_pixel = bits[(by + y) * width + (bx + x)];
-                    pixels.push(if is_pixel { 1 } else { 0 }); // 1 là chữ, 0 là nền
-                }
+    // 1. Tính Integral Image (Ảnh tích phân) để tính trung bình vùng siêu nhanh
+    let mut integral_image = vec![0i64; gray.len()];
+    for y in 0..height {
+        let mut sum = 0i64;
+        for x in 0..width {
+            sum += gray[y * width + x] as i64;
+            if y == 0 {
+                integral_image[y * width + x] = sum;
+            } else {
+                integral_image[y * width + x] = integral_image[(y - 1) * width + x] + sum;
             }
-
-            let vector_hex = vector
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<String>();
-            let unknown_obj = json!({
-                "hash": vector_hex,
-                "width": bw,
-                "height": bh,
-                "pixels": pixels
-            });
-            unknown_json_objects.push(unknown_obj);
         }
     }
+
+    // 2. Duyệt từng pixel và so sánh với trung bình vùng
+    for y in 0..height as i32 {
+        for x in 0..width as i32 {
+            let x1 = (x - s).max(0);
+            let x2 = (x + s).min(width as i32 - 1);
+            let y1 = (y - s).max(0);
+            let y2 = (y + s).min(height as i32 - 1);
+
+            let count = (x2 - x1 + 1) * (y2 - y1 + 1);
+            let sum = integral_image[y2 as usize * width + x2 as usize]
+                - integral_image[y1 as usize * width + x2 as usize]
+                - integral_image[y2 as usize * width + x1 as usize]
+                + integral_image[y1 as usize * width + x1 as usize];
+
+            // Nếu pixel hiện tại tối hơn đáng kể so với trung bình vùng xung quanh
+            if (gray[y as usize * width + x as usize] as i64 * count as i64)
+                < (sum * (100 - t) / 100)
+            {
+                result[y as usize * width + x as usize] = true;
+            }
+        }
+    }
+    result
+}
+
+// 🚀 THUẬT TOÁN HPP: Cắt 1 ảnh to thành nhiều ảnh 1 dòng
+pub fn split_into_lines(
+    binary_pixels: &[u8],
+    width: usize,
+    height: usize,
+) -> Vec<(Vec<u8>, usize, usize)> {
+    // Trả về Vec chứa (Mảng_Pixel, Rộng, Cao)
+
+    // Bước 1: Quét dọc ảnh, đếm pixel trắng trên từng hàng ngang
+    let white_sums: Vec<usize> = binary_pixels
+        .chunks(width)
+        .map(|row| row.iter().filter(|&&p| p > 127).count())
+        .collect();
+
+    let total_white: usize = white_sums.iter().sum();
+    let total_pixels = width * height;
+
+    let is_white_bg = total_white > (total_pixels / 2);
+    app_log!("is white: {}", is_white_bg);
+
+    // Quy đổi từ "Đếm Trắng" sang "Đếm Chữ" (Foreground)
+    let fg_sums: Vec<usize> = white_sums
+        .into_iter()
+        .map(|white_count| {
+            if is_white_bg {
+                // Nếu nền trắng, nét chữ (màu đen) sẽ bằng Tổng chiều rộng - Số pixel trắng
+                width - white_count
+            } else {
+                // Nếu nền đen, nét chữ chính là số pixel trắng
+                white_count
+            }
+        })
+        .collect();
+
+    // Bước 2: Tìm tọa độ Y bắt đầu và kết thúc của từng dòng chữ
+    let mut line_coords = Vec::new();
+    let mut in_line = false;
+    let mut start_y = 0;
+
+    // Ngưỡng lọc nhiễu: Hàng nào có <= 2 pixel trắng thì coi như là khoảng trống (khe đen)
+    let noise_threshold = 2;
+
+    // Duyệt qua mảng fg_sums (chứa số lượng pixel của NÉT CHỮ)
+    for (y, &sum) in fg_sums.iter().enumerate() {
+        if sum > noise_threshold {
+            if !in_line {
+                in_line = true;
+                start_y = y;
+            }
+        } else {
+            if in_line {
+                in_line = false;
+                if y - start_y > 5 {
+                    line_coords.push((start_y, y));
+                }
+            }
+        }
+    }
+    // Chốt sổ dòng cuối cùng nếu sát mép ảnh
+    if in_line && (height - start_y > 5) {
+        line_coords.push((start_y, height));
+    }
+
+    // Bước 3: Cắt mảng 1 chiều thành các bức ảnh nhỏ
+    let mut cropped_images = Vec::new();
+    for (start_y, end_y) in line_coords {
+        let new_h = end_y - start_y;
+        let mut cropped = Vec::with_capacity(width * new_h);
+
+        for y in start_y..end_y {
+            let row_start = y * width;
+            cropped.extend_from_slice(&binary_pixels[row_start..row_start + width]);
+        }
+        cropped_images.push((cropped, width, new_h));
+    }
+
+    cropped_images
+}
+
+pub fn recognize_sequence(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    mut debug_bag: Option<&mut OcrDebugBag>,
+) -> (String, String) {
+    let expected_len = width.saturating_mul(height).saturating_mul(4);
+
+    // 1. Nếu ảnh size = 0, hoặc độ dài mảng byte bé hơn kích thước thực tế
+    if width == 0 || height == 0 || rgba.len() < expected_len {
+        // Thoát êm đẹp, trả về kết quả rỗng, App sống sót 100%
+        return (String::new(), "[]".to_string());
+    }
+
+    let gray = to_grayscale(rgba, width, height);
+    let scale_factor = 2; // Bác có thể thử 3 nếu ảnh gốc quá bé
+    let (scaled_gray, new_w, new_h) = upscale_gray(&gray, width, height, scale_factor);
+    if let Some(bag) = debug_bag.as_deref_mut() {
+        bag.gray_pixels = scaled_gray.clone();
+        bag.width = new_w; // Cập nhật lại kích thước cho túi đồ
+        bag.height = new_h;
+    }
+
+    // let blur = box_blur(&gray, new_w, new_h);
+
+    let bits = adaptive_threshold(&scaled_gray, new_w, new_h);
+    let binary_pixels: Vec<u8> = bits.iter().map(|&b| if b { 255 } else { 0 }).collect();
+
+    // 2. Chạy thuật toán HPP để cắt ra các dòng
+    let lines = split_into_lines(&binary_pixels, new_w, new_h);
+
+    if let Some(bag) = debug_bag.as_deref_mut() {
+        bag.gray_pixels = scaled_gray.clone();
+
+        // Gán ảnh gốc (phòng khi cần soi toàn cảnh)
+        bag.binary_pixels = binary_pixels;
+        bag.width = new_w;
+        bag.height = new_h;
+
+        let lines_len = lines.len();
+        bag.lines = lines;
+        bag.line_inputs = vec![String::new(); lines_len];
+    }
+
+    // let char_boxes = segment_characters(&bits, new_w, new_h);
+    // if let Some(bag) = debug_bag {
+    //     bag.boxes = char_boxes.clone();
+    //     bag.width = new_w;
+    //     bag.height = new_h;
+    // }
+
+    // let mut result_string = String::new();
+    // let mut unknown_json_objects = Vec::new();
+
+    let result_string = String::new();
+    let unknown_json_objects: Vec<serde_json::Value> = Vec::new();
+
+    // // Bước 3: Ép khuôn & Tra sổ tay
+    // for c_box in char_boxes {
+    //     let (bx, by, bw, bh) = c_box;
+    //     // if bw < 3 || bh < 5 {
+    //     //     crate::logger("   -> ❌ Bị loại vì kích thước quá nhỏ!");
+    //     //     continue;
+    //     // }
+
+    //     // Nén khối mật độ từ ảnh XÁM
+    //     let vector = generate_density_vector(&gray, new_w, c_box);
+
+    //     if let Some(known_char) = lookup_vector_fuzzy(&vector, 2000) {
+    //         // Đã biết -> Nhét vào chuỗi kết quả
+    //         result_string.push(known_char);
+    //     } else {
+    //         // Chưa biết -> Báo lỗi chấm hỏi và lưu mã Hash lại
+    //         result_string.push('?');
+
+    //         let mut pixels = Vec::with_capacity(bw * bh);
+    //         for y in 0..bh {
+    //             for x in 0..bw {
+    //                 let is_pixel = bits[(by + y) * width + (bx + x)];
+    //                 pixels.push(if is_pixel { 1 } else { 0 }); // 1 là chữ, 0 là nền
+    //             }
+    //         }
+
+    //         let vector_hex = vector
+    //             .iter()
+    //             .map(|b| format!("{:02x}", b))
+    //             .collect::<String>();
+    //         let unknown_obj = json!({
+    //             "hash": vector_hex,
+    //             "width": bw,
+    //             "height": bh,
+    //             "pixels": pixels
+    //         });
+    //         unknown_json_objects.push(unknown_obj);
+    //     }
+    // }
 
     let json_str = if unknown_json_objects.is_empty() {
         "[]".to_string()
@@ -454,3 +343,179 @@ pub fn recognize_sequence(rgba: &[u8], width: usize, height: usize) -> (String, 
     };
     (result_string, json_str)
 }
+
+// // 2. Tách các chữ số dựa vào các cột trống (Không có pixel nào là true)
+// pub fn segment_characters(
+//     bits: &[bool],
+//     width: usize,
+//     height: usize,
+// ) -> Vec<(usize, usize, usize, usize)> {
+//     let mut visited = vec![false; width * height];
+//     let mut boxes = Vec::new();
+
+//     // 8 hướng di chuyển để loang màu (Trái, Phải, Lên, Xuống và 4 góc chéo)
+//     let dirs = [
+//         (-1, -1),
+//         (0, -1),
+//         (1, -1),
+//         (-1, 0),
+//         (1, 0),
+//         (-1, 1),
+//         (0, 1),
+//         (1, 1),
+//     ];
+
+//     for y in 0..height {
+//         for x in 0..width {
+//             let idx = y * width + x;
+
+//             // Nếu gặp pixel sáng và chưa từng ghé thăm -> Bắt đầu loang màu!
+//             if bits[idx] && !visited[idx] {
+//                 let mut queue = vec![(x, y)];
+//                 visited[idx] = true;
+
+//                 // Lưu lại tọa độ để vẽ Hộp bao (Bounding Box)
+//                 let mut min_x = x;
+//                 let mut max_x = x;
+//                 let mut min_y = y;
+//                 let mut max_y = y;
+//                 let mut area = 0; // Diện tích (số pixel thực tế của chữ)
+
+//                 // Vòng lặp BFS (Breadth-First Search) loang màu
+//                 while let Some((cx, cy)) = queue.pop() {
+//                     area += 1;
+
+//                     for &(dx, dy) in &dirs {
+//                         let nx = cx as isize + dx;
+//                         let ny = cy as isize + dy;
+
+//                         // Kiểm tra xem có bị tràn viền không
+//                         if nx >= 0 && nx < width as isize && ny >= 0 && ny < height as isize {
+//                             let nx = nx as usize;
+//                             let ny = ny as usize;
+//                             let n_idx = ny * width + nx;
+
+//                             // Nếu pixel bên cạnh cũng sáng -> Ăn luôn!
+//                             if bits[n_idx] && !visited[n_idx] {
+//                                 visited[n_idx] = true;
+//                                 queue.push((nx, ny));
+
+//                                 // Cập nhật lại khung chữ nhật bao quanh
+//                                 if nx < min_x {
+//                                     min_x = nx;
+//                                 }
+//                                 if nx > max_x {
+//                                     max_x = nx;
+//                                 }
+//                                 if ny < min_y {
+//                                     min_y = ny;
+//                                 }
+//                                 if ny > max_y {
+//                                     max_y = ny;
+//                                 }
+//                             }
+//                         }
+//                     }
+//                 }
+
+//                 let box_w = max_x - min_x + 1;
+//                 let box_h = max_y - min_y + 1;
+
+//                 // --- BỘ LỌC TÀN KHỐC (Xử lý nhiễu & viền nét đứt) ---
+//                 // Chỉ nhận những hòn đảo:
+//                 // 1. Diện tích > 5 pixel (Lọc điểm nhiễu lấm tấm)
+//                 // 2. Chiều cao > 4 pixel (Lọc nét đứt ngang của UI)
+//                 // 3. Tỷ lệ không được quá dị dạng (Tùy chọn, có thể thêm sau)
+//                 if area > 5 && box_h > 4 {
+//                     boxes.push((min_x, min_y, box_w, box_h));
+//                 }
+//             }
+//         }
+//     }
+
+//     // CỰC KỲ QUAN TRỌNG: Loang màu xong thì các chữ số có thể bị lộn xộn thứ tự.
+//     // Ta phải sắp xếp lại các hộp từ Trái sang Phải (theo min_x) để đọc chữ không bị ngược.
+//     boxes.sort_by_key(|a| a.0);
+//     boxes
+// }
+
+// // 🚀 THUẬT TOÁN MỚI: Trích xuất vector đặc trưng 64 chiều (Average Pooling)
+// pub fn generate_density_vector(
+//     gray: &[u8],
+//     orig_width: usize,
+//     char_box: (usize, usize, usize, usize),
+// ) -> [u8; 64] {
+//     let (bx, by, bw, bh) = char_box;
+//     let mut vector = [0; 64];
+
+//     let img_height = gray.len() / orig_width.max(1);
+
+//     // Tính kích thước của 1 "khối" trong ảnh gốc
+//     let cell_w = (bw as f32 / 8.0).max(1.0);
+//     let cell_h = (bh as f32 / 8.0).max(1.0);
+
+//     for y in 0..8 {
+//         for x in 0..8 {
+//             let start_x = bx + (x as f32 * cell_w) as usize;
+//             let start_y = by + (y as f32 * cell_h) as usize;
+
+//             let end_x = (bx + ((x + 1) as f32 * cell_w).ceil() as usize)
+//                 .min(bx + bw)
+//                 .min(orig_width); // Chặn cạnh phải
+
+//             let end_y = (by + ((y + 1) as f32 * cell_h).ceil() as usize)
+//                 .min(by + bh)
+//                 .min(img_height); // Chặn cạnh đáy
+
+//             let mut pixel_sum: u32 = 0;
+//             let mut pixel_count: u32 = 0;
+
+//             // Quét AVERAGE POOLING: Cộng dồn giá trị độ sáng của mọi pixel trong khối
+//             for cy in start_y..end_y {
+//                 for cx in start_x..end_x {
+//                     let idx = cy * orig_width + cx;
+
+//                     if idx < gray.len() {
+//                         pixel_sum += gray[idx] as u32;
+//                         pixel_count += 1;
+//                     }
+//                 }
+//             }
+
+//             // Tính trung bình mật độ (Scale về từ 0.0 đến 1.0)
+//             if let Some(avg) = pixel_sum.checked_div(pixel_count) {
+//                 let vector_index = y * 8 + x;
+//                 vector[vector_index] = avg as u8;
+//             }
+//         }
+//     }
+
+//     vector
+// }
+
+// pub fn lookup_vector_fuzzy(target_vector: &[u8; 64], max_diff: u32) -> Option<char> {
+//     if let Ok(dict) = DICTIONARY.lock() {
+//         let mut best_match = None;
+//         let mut min_diff = max_diff + 1;
+
+//         for (known_vector, &character) in dict.iter() {
+//             // Phép toán đo khoảng cách Manhattan (Sum of Absolute Differences)
+//             // Tính tổng độ chênh lệch màu của từng ô 8x8 một cách siêu tốc
+//             let diff: u32 = target_vector
+//                 .iter()
+//                 .zip(known_vector.iter())
+//                 .map(|(&a, &b)| a.abs_diff(b) as u32)
+//                 .sum();
+
+//             if diff < min_diff {
+//                 min_diff = diff;
+//                 best_match = Some(character);
+//             }
+//         }
+
+//         if min_diff <= max_diff {
+//             return best_match;
+//         }
+//     }
+//     None
+// }
