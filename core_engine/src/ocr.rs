@@ -5,6 +5,9 @@ use rayon::prelude::*;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::fs;
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::app_log;
 use crate::ui::OcrDebugBag;
@@ -41,6 +44,63 @@ pub fn save_training_data(pixels: &[u8], width: usize, height: usize, label: &st
             app_log!("❌ Lưu thất bại: {} | Lỗi: {}", filename, e);
         }
     }
+}
+
+pub fn save_yolo_data(rgba: &[u8], width: usize, height: usize, boxes: &[egui::Rect]) {
+    // Tạo tên file ngẫu nhiên dựa trên thời gian
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+
+    let base_name = format!("game_ui_{}", timestamp);
+
+    // Đảm bảo thư mục tồn tại
+    let img_dir = "dataset_yolo/images/train";
+    let label_dir = "dataset_yolo/labels/train";
+    fs::create_dir_all(img_dir).unwrap();
+    fs::create_dir_all(label_dir).unwrap();
+
+    // 1. LƯU ẢNH (Dùng thư viện image)
+    let img_path = format!("{}/{}.png", img_dir, base_name);
+    image::save_buffer(
+        &img_path,
+        rgba,
+        width as u32,
+        height as u32,
+        image::ColorType::Rgba8,
+    )
+    .expect("Lỗi khi lưu ảnh YOLO");
+
+    // 2. LƯU FILE TXT (YOLO FORMAT)
+    let txt_path = format!("{}/{}.txt", label_dir, base_name);
+    let mut file = fs::File::create(&txt_path).expect("Không tạo được file YOLO txt");
+
+    let w_f32 = width as f32;
+    let h_f32 = height as f32;
+
+    for b in boxes {
+        // b là tọa độ trên ảnh gốc
+        let box_w = b.width();
+        let box_h = b.height();
+        let x_center = b.min.x + (box_w / 2.0);
+        let y_center = b.min.y + (box_h / 2.0);
+
+        // Chuẩn hóa (Normalize) về [0..1]
+        let norm_x = x_center / w_f32;
+        let norm_y = y_center / h_f32;
+        let norm_w = box_w / w_f32;
+        let norm_h = box_h / h_f32;
+
+        // Class id = 0, cách nhau bằng dấu cách
+        let line = format!(
+            "0 {:.6} {:.6} {:.6} {:.6}\n",
+            norm_x, norm_y, norm_w, norm_h
+        );
+        file.write_all(line.as_bytes()).unwrap();
+    }
+
+    println!("✅ Đã xuất YOLO data: {}", base_name);
 }
 
 pub fn to_grayscale(rgba: &[u8], _width: usize, _height: usize) -> Vec<u8> {
@@ -96,64 +156,72 @@ pub fn upscale_gray(
     (gray.to_vec(), width, height)
 }
 
-// // Một bộ lọc Box Blur 3x3 đơn giản để làm mịn nhiễu trước khi threshold
-// pub fn box_blur(gray: &[u8], width: usize, height: usize) -> Vec<u8> {
-//     let mut out = vec![0u8; gray.len()];
-//     for y in 1..height - 1 {
-//         for x in 1..width - 1 {
-//             let sum: u32 = gray[(y - 1) * width + (x - 1)] as u32
-//                 + gray[(y - 1) * width + x] as u32
-//                 + gray[(y - 1) * width + (x + 1)] as u32
-//                 + gray[y * width + (x - 1)] as u32
-//                 + gray[y * width + x] as u32
-//                 + gray[y * width + (x + 1)] as u32
-//                 + gray[(y + 1) * width + (x - 1)] as u32
-//                 + gray[(y + 1) * width + x] as u32
-//                 + gray[(y + 1) * width + (x + 1)] as u32;
-//             out[y * width + x] = (sum / 9) as u8;
-//         }
-//     }
-//     out
-// }
-
 pub fn adaptive_threshold(gray: &[u8], width: usize, height: usize) -> Vec<bool> {
     let mut result = vec![false; gray.len()];
-    let s = (width / 8) as i32; // Kích thước vùng lân cận (tùy chỉnh theo font chữ)
-    let t = 15; // Ngưỡng phần trăm (tối hơn 15% so với nền thì là chữ)
+    let s = (width / 8).max(1) as i32; // Kích thước vùng lân cận (tùy chỉnh theo font chữ)
+
+    let t = 25; // Ngưỡng phần trăm (tối hơn % so với nền thì là chữ)
+    let noise_shield = 35;
+
+    let global_sum: u64 = gray.iter().map(|&p| p as u64).sum();
+    let global_mean = (global_sum / (width * height) as u64) as u8;
+
+    let mut dark_count = 0;
+    let mut light_count = 0;
+    for &p in gray {
+        if p < global_mean {
+            dark_count += 1;
+        } else {
+            light_count += 1;
+        }
+    }
+
+    // Nét chữ luôn chiếm diện tích ÍT HƠN nền.
+    // Nếu điểm tối nhiều hơn -> Nền đen, Chữ trắng.
+    let is_light_text = dark_count > light_count;
 
     // 1. Tính Integral Image (Ảnh tích phân) để tính trung bình vùng siêu nhanh
-    let mut integral_image = vec![0i64; gray.len()];
+    let mut int_img = vec![0i64; (width + 1) * (height + 1)];
     for y in 0..height {
-        let mut sum = 0i64;
         for x in 0..width {
-            sum += gray[y * width + x] as i64;
-            if y == 0 {
-                integral_image[y * width + x] = sum;
-            } else {
-                integral_image[y * width + x] = integral_image[(y - 1) * width + x] + sum;
-            }
+            int_img[(y + 1) * (width + 1) + (x + 1)] = gray[y * width + x] as i64
+                + int_img[y * (width + 1) + (x + 1)]
+                + int_img[(y + 1) * (width + 1) + x]
+                - int_img[y * (width + 1) + x];
         }
     }
 
     // 2. Duyệt từng pixel và so sánh với trung bình vùng
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
-            let x1 = (x - s).max(0);
-            let x2 = (x + s).min(width as i32 - 1);
-            let y1 = (y - s).max(0);
-            let y2 = (y + s).min(height as i32 - 1);
+    for y in 0..height {
+        for x in 0..width {
+            // Lấy tọa độ cửa sổ
+            let x1 = (x as i32 - s).max(0) as usize;
+            let x2 = (x as i32 + s).min(width as i32 - 1) as usize;
+            let y1 = (y as i32 - s).max(0) as usize;
+            let y2 = (y as i32 + s).min(height as i32 - 1) as usize;
 
-            let count = (x2 - x1 + 1) * (y2 - y1 + 1);
-            let sum = integral_image[y2 as usize * width + x2 as usize]
-                - integral_image[y1 as usize * width + x2 as usize]
-                - integral_image[y2 as usize * width + x1 as usize]
-                + integral_image[y1 as usize * width + x1 as usize];
+            let count = ((x2 - x1 + 1) * (y2 - y1 + 1)) as i64;
+            let sum = int_img[(y2 + 1) * (width + 1) + (x2 + 1)]
+                - int_img[y1 * (width + 1) + (x2 + 1)]
+                - int_img[(y2 + 1) * (width + 1) + x1]
+                + int_img[y1 * (width + 1) + x1];
 
-            // Nếu pixel hiện tại tối hơn đáng kể so với trung bình vùng xung quanh
-            if (gray[y as usize * width + x as usize] as i64 * count as i64)
-                < (sum * (100 - t) / 100)
-            {
-                result[y as usize * width + x as usize] = true;
+            let local_mean = sum / count;
+            let pixel = gray[y * width + x] as i64;
+
+            // KHIÊN CHỐNG NHIỄU: Nếu pixel quá tiệm cận với màu nền chung thì coi như là rác
+            if (pixel - global_mean as i64).abs() > noise_shield {
+                if is_light_text {
+                    // CHỮ TRẮNG NỀN ĐEN: Pixel nét chữ phải SÁNG HƠN trung bình vùng
+                    if pixel * 100 > local_mean * (100 + t) {
+                        result[y * width + x] = true;
+                    }
+                } else {
+                    // CHỮ ĐEN NỀN TRẮNG: Pixel nét chữ phải TỐI HƠN trung bình vùng
+                    if pixel * 100 < local_mean * (100 - t) {
+                        result[y * width + x] = true;
+                    }
+                }
             }
         }
     }
@@ -254,7 +322,7 @@ pub fn recognize_sequence(
     }
 
     let gray = to_grayscale(rgba, width, height);
-    let scale_factor = 2; // Bác có thể thử 3 nếu ảnh gốc quá bé
+    let scale_factor = 3; // Bác có thể thử 3 nếu ảnh gốc quá bé
     let (scaled_gray, new_w, new_h) = upscale_gray(&gray, width, height, scale_factor);
     if let Some(bag) = debug_bag.as_deref_mut() {
         bag.gray_pixels = scaled_gray.clone();
@@ -264,24 +332,24 @@ pub fn recognize_sequence(
 
     // let blur = box_blur(&gray, new_w, new_h);
 
-    let bits = adaptive_threshold(&scaled_gray, new_w, new_h);
-    let binary_pixels: Vec<u8> = bits.iter().map(|&b| if b { 255 } else { 0 }).collect();
+    // let bits = adaptive_threshold(&scaled_gray, new_w, new_h);
+    // let binary_pixels: Vec<u8> = bits.iter().map(|&b| if b { 255 } else { 0 }).collect();
 
-    // 2. Chạy thuật toán HPP để cắt ra các dòng
-    let lines = split_into_lines(&binary_pixels, new_w, new_h);
+    // // 2. Chạy thuật toán HPP để cắt ra các dòng
+    // let lines = split_into_lines(&binary_pixels, new_w, new_h);
 
-    if let Some(bag) = debug_bag.as_deref_mut() {
-        bag.gray_pixels = scaled_gray.clone();
+    // if let Some(bag) = debug_bag.as_deref_mut() {
+    //     bag.gray_pixels = scaled_gray.clone();
 
-        // Gán ảnh gốc (phòng khi cần soi toàn cảnh)
-        bag.binary_pixels = binary_pixels;
-        bag.width = new_w;
-        bag.height = new_h;
+    //     // Gán ảnh gốc (phòng khi cần soi toàn cảnh)
+    //     bag.binary_pixels = binary_pixels;
+    //     bag.width = new_w;
+    //     bag.height = new_h;
 
-        let lines_len = lines.len();
-        bag.lines = lines;
-        bag.line_inputs = vec![String::new(); lines_len];
-    }
+    //     let lines_len = lines.len();
+    //     bag.lines = lines;
+    //     bag.line_inputs = vec![String::new(); lines_len];
+    // }
 
     // let char_boxes = segment_characters(&bits, new_w, new_h);
     // if let Some(bag) = debug_bag {

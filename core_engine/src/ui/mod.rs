@@ -56,6 +56,10 @@ pub struct CheatMenuApp {
     pub debug_label_input: String,
 
     pub lines: Vec<(Vec<u8>, usize, usize)>,
+
+    pub yolo_boxes: Vec<egui::Rect>,
+    pub yolo_drawing_start: Option<egui::Pos2>,
+    pub yolo_current_drag: Option<egui::Pos2>,
 }
 
 impl CheatMenuApp {
@@ -84,6 +88,9 @@ impl CheatMenuApp {
             debug_zoom: 1.0,
             debug_label_input: String::new(),
             lines: Vec::new(),
+            yolo_boxes: Vec::new(),
+            yolo_drawing_start: None,
+            yolo_current_drag: None,
         }
     }
 
@@ -172,11 +179,26 @@ impl CheatMenuApp {
                 egui::TextureOptions::NEAREST,
             ));
 
-            self.debug_binary_texture = Some(ctx.load_texture(
-                "binary",
-                egui::ColorImage::from_gray(upscaled_size, &my_bag.binary_pixels),
-                egui::TextureOptions::NEAREST,
-            ));
+            // self.debug_binary_texture = Some(ctx.load_texture(
+            //     "binary",
+            //     egui::ColorImage::from_gray(upscaled_size, &my_bag.binary_pixels),
+            //     egui::TextureOptions::NEAREST,
+            // ));
+
+            // let mut line_textures = Vec::new();
+            // for (i, (line_pixels, line_w, line_h)) in my_bag.lines.iter().enumerate() {
+            //     let size = [*line_w, *line_h];
+            //     // Dùng from_gray vì ảnh dòng là ảnh nhị phân
+            //     let color_img = egui::ColorImage::from_gray(size, line_pixels);
+
+            //     let tex = ctx.load_texture(
+            //         format!("line_{}", i),
+            //         color_img,
+            //         egui::TextureOptions::NEAREST,
+            //     );
+            //     line_textures.push(tex);
+            // }
+            // my_bag.line_textures = line_textures;
 
             self.debug_bag = Some(my_bag);
         }

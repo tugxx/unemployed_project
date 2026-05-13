@@ -148,9 +148,12 @@ pub fn show_debug_viewport(app: &mut CheatMenuApp, ctx: &egui::Context) {
                             // Vẽ 1 cái khung bao quanh từng dòng nhìn cho pờ-rồ
                             ui.group(|ui| {
                                 ui.vertical(|ui| {
+                                    let zoom = app.debug_zoom;
+
                                     // 1. Hiển thị ảnh của dòng này
                                     if let Some(tex) = bag.line_textures.get(i) {
-                                        ui.image(tex);
+                                        let img_size = tex.size_vec2() * zoom;
+                                        ui.add(egui::Image::new(tex).fit_to_exact_size(img_size));
                                     }
 
                                     ui.add_space(5.0);
@@ -161,7 +164,12 @@ pub fn show_debug_viewport(app: &mut CheatMenuApp, ctx: &egui::Context) {
 
                                         // Khiên ép kiểu cho ô input hiện tại
                                         bag.line_inputs[i].retain(|c| {
-                                            c.is_ascii_digit() || c == ',' || c == ' ' || c == '%'
+                                            c.is_ascii_digit()
+                                                || c == ','
+                                                || c == ' '
+                                                || c == '%'
+                                                || c == '-'
+                                                || c == '/'
                                         });
 
                                         ui.add(
@@ -216,14 +224,134 @@ pub fn show_debug_viewport(app: &mut CheatMenuApp, ctx: &egui::Context) {
 
                             // Vẽ ảnh Raw
                             if let Some(tex) = &app.debug_raw_texture {
-                                ui.label(format!(
-                                    "1. Raw Image ({}x{})",
-                                    tex.size()[0],
-                                    tex.size()[1]
-                                ));
-                                ui.add(
-                                    egui::Image::new(tex).fit_to_exact_size(tex.size_vec2() * zoom),
+                                let img_w = tex.size()[0] as f32;
+                                let img_h = tex.size()[1] as f32;
+
+                                ui.horizontal(|ui| {
+                                    ui.label(format!(
+                                        "1. Raw Image ({}x{}) - YOLO LABELING",
+                                        img_w, img_h
+                                    ));
+
+                                    // Nút xóa khung cuối
+                                    if ui.button("↩ Undo Box").clicked() {
+                                        app.yolo_boxes.pop();
+                                    }
+
+                                    // Nút xóa hết
+                                    if ui.button("🗑 Clear All").clicked() {
+                                        app.yolo_boxes.clear();
+                                    }
+
+                                    // NÚT LƯU DATA YOLO
+                                    if ui.button("🔥 LƯU DATA YOLO").clicked() {
+                                        crate::ocr::save_yolo_data(
+                                            &raw_pixels, 
+                                            img_w as usize,
+                                            img_h as usize,
+                                            &app.yolo_boxes,
+                                        );
+                                        // Có thể clear box sau khi lưu nếu muốn
+                                        app.yolo_boxes.clear();
+                                    }
+                                });
+
+                                // Tính kích thước ảnh hiển thị trên UI
+                                let screen_img_size = tex.size_vec2() * zoom;
+
+                                // Vẽ ảnh và ĐĂNG KÝ NHẬN SỰ KIỆN CHUỘT
+                                let image_response = ui.add(
+                                    egui::Image::new(tex)
+                                        .fit_to_exact_size(screen_img_size)
+                                        .sense(egui::Sense::click_and_drag()), // Quan trọng: Cho phép click & kéo
                                 );
+
+                                // --- XỬ LÝ SỰ KIỆN VẼ KHUNG YOLO ---
+                                let screen_rect = image_response.rect; // Tọa độ ảnh trên màn hình Window
+
+                                // Hàm tiện ích: Đổi Tọa độ Màn hình -> Tọa độ Ảnh gốc
+                                let screen_to_image = |screen_pos: egui::Pos2| -> egui::Pos2 {
+                                    egui::pos2(
+                                        (screen_pos.x - screen_rect.min.x) / zoom,
+                                        (screen_pos.y - screen_rect.min.y) / zoom,
+                                    )
+                                };
+
+                                // Hàm tiện ích: Đổi Tọa độ Ảnh gốc -> Tọa độ Màn hình (để vẽ đè lên)
+                                let image_to_screen = |img_pos: egui::Pos2| -> egui::Pos2 {
+                                    egui::pos2(
+                                        screen_rect.min.x + img_pos.x * zoom,
+                                        screen_rect.min.y + img_pos.y * zoom,
+                                    )
+                                };
+
+                                // Xử lý chuột thao tác trên ảnh
+                                if image_response.drag_started() {
+                                    if let Some(pos) = image_response.interact_pointer_pos() {
+                                        app.yolo_drawing_start = Some(screen_to_image(pos));
+                                    }
+                                }
+
+                                if image_response.dragged() {
+                                    if let Some(pos) = image_response.interact_pointer_pos() {
+                                        app.yolo_current_drag = Some(screen_to_image(pos));
+                                    }
+                                }
+
+                                if image_response.drag_released() {
+                                    if let (Some(start), Some(end)) =
+                                        (app.yolo_drawing_start, app.yolo_current_drag)
+                                    {
+                                        // Giới hạn khung không vượt quá mép ảnh
+                                        let min_x = start.x.min(end.x).clamp(0.0, img_w);
+                                        let min_y = start.y.min(end.y).clamp(0.0, img_h);
+                                        let max_x = start.x.max(end.x).clamp(0.0, img_w);
+                                        let max_y = start.y.max(end.y).clamp(0.0, img_h);
+
+                                        // Chỉ lưu nếu khung có kích thước đủ lớn (chống click nhầm)
+                                        if max_x - min_x > 2.0 && max_y - min_y > 2.0 {
+                                            app.yolo_boxes.push(egui::Rect::from_min_max(
+                                                egui::pos2(min_x, min_y),
+                                                egui::pos2(max_x, max_y),
+                                            ));
+                                        }
+                                    }
+                                    // Reset trạng thái vẽ
+                                    app.yolo_drawing_start = None;
+                                    app.yolo_current_drag = None;
+                                }
+
+                                // --- VẼ ĐÈ CÁC KHUNG LÊN ẢNH ---
+                                let painter = ui.painter();
+
+                                // 1. Vẽ các khung đã chốt
+                                for box_img_space in &app.yolo_boxes {
+                                    let screen_box = egui::Rect::from_min_max(
+                                        image_to_screen(box_img_space.min),
+                                        image_to_screen(box_img_space.max),
+                                    );
+                                    painter.rect_stroke(
+                                        screen_box,
+                                        0.0,
+                                        egui::Stroke::new(2.0, egui::Color32::RED), // Viền đỏ dày 2px
+                                    );
+                                }
+
+                                // 2. Vẽ khung đang kéo (hiển thị nét đứt hoặc màu khác)
+                                if let (Some(start), Some(end)) =
+                                    (app.yolo_drawing_start, app.yolo_current_drag)
+                                {
+                                    let screen_box = egui::Rect::from_min_max(
+                                        image_to_screen(start),
+                                        image_to_screen(end),
+                                    );
+                                    painter.rect_stroke(
+                                        screen_box,
+                                        0.0,
+                                        egui::Stroke::new(2.0, egui::Color32::YELLOW), // Viền vàng khi đang kéo
+                                    );
+                                }
+
                                 ui.add_space(10.0);
                             }
 
@@ -236,50 +364,30 @@ pub fn show_debug_viewport(app: &mut CheatMenuApp, ctx: &egui::Context) {
                                 ui.add_space(10.0);
                             }
 
-                            // Vẽ ảnh Binary & Khung viền đỏ
-                            if let (Some(tex), Some(bag)) =
-                                (&app.debug_binary_texture, &app.debug_bag)
-                            {
-                                ui.label(format!(
-                                    "3. Binary & Boxes (Tìm thấy {} ký tự)",
-                                    bag.boxes.len()
-                                ));
+                            // // Vẽ ảnh Binary
+                            // if let (Some(tex), Some(bag)) =
+                            //     (&app.debug_binary_texture, &app.debug_bag)
+                            // {
+                            //     ui.label(format!(
+                            //         "3. Binary & Boxes (Tìm thấy {} ký tự)",
+                            //         bag.boxes.len()
+                            //     ));
 
-                                let img_size = tex.size_vec2() * zoom;
-                                let (rect, _) =
-                                    ui.allocate_exact_size(img_size, egui::Sense::hover());
+                            //     let img_size = tex.size_vec2() * zoom;
+                            //     let (rect, _) =
+                            //         ui.allocate_exact_size(img_size, egui::Sense::hover());
 
-                                // Vẽ nền ảnh nhị phân
-                                ui.painter().image(
-                                    tex.id(),
-                                    rect,
-                                    egui::Rect::from_min_max(
-                                        egui::pos2(0.0, 0.0),
-                                        egui::pos2(1.0, 1.0),
-                                    ),
-                                    egui::Color32::WHITE,
-                                );
-
-                                // Quét túi lấy tọa độ đè khung đỏ lên
-                                for &(bx, by, bw, bh) in &bag.boxes {
-                                    let min_x = rect.min.x + (bx as f32 * zoom);
-                                    let min_y = rect.min.y + (by as f32 * zoom);
-                                    let box_rect = egui::Rect::from_min_max(
-                                        egui::pos2(min_x, min_y),
-                                        egui::pos2(
-                                            min_x + (bw as f32 * zoom),
-                                            min_y + (bh as f32 * zoom),
-                                        ),
-                                    );
-                                    ui.painter().rect(
-                                        box_rect,
-                                        0.0,
-                                        egui::Color32::TRANSPARENT,
-                                        (1.0, egui::Color32::RED),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-                            }
+                            //     // Vẽ nền ảnh nhị phân
+                            //     ui.painter().image(
+                            //         tex.id(),
+                            //         rect,
+                            //         egui::Rect::from_min_max(
+                            //             egui::pos2(0.0, 0.0),
+                            //             egui::pos2(1.0, 1.0),
+                            //         ),
+                            //         egui::Color32::WHITE,
+                            //     );
+                            // }
                         });
                     });
                 } else {
